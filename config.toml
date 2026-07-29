@@ -1,0 +1,27 @@
+# quick-actions configuration
+# Coloca este archivo junto al .exe o en %APPDATA%\quick-actions\
+
+[ollama]
+model = "gemma4:cloud"
+endpoint = "http://localhost:11434/api/generate"
+timeout_seconds = 60
+
+[ui]
+font_size = 16              # Tamano de fuente en ventanas de resultado
+window_width = 800
+window_height = 600
+history_max_entries = 50    # Maximo entradas en historial de correcciones
+
+[hotkeys]
+# Las hotkeys estan hardcodeadas en codigo (como AHK),
+# pero puedes desactivar modulos enteros aqui:
+enabled = true
+
+[paths]
+chrome = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+
+# Para fases futuras (app-launcher, notifications)
+[launcher]
+# enabled = false  # Fase 4
+[notifications]
+# enabled = false  # Fase 5

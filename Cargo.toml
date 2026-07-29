@@ -1,0 +1,66 @@
+[package]
+name = "quick-actions"
+version = "0.2.0"
+edition = "2021"
+authors = ["avicdro"]
+description = "Suite de atajos globales para IA y productividad (migracion AHK)"
+license = "MIT"
+
+[dependencies]
+# Async runtime + HTTP
+tokio = { version = "1.43", features = ["rt-multi-thread", "sync", "macros", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Config
+toml = "0.8"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Fechas para historial
+chrono = { version = "0.4", features = ["serde"] }
+
+# Logging (con escritura a archivo para debug en Windows)
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+
+# --- Windows-only dependencies ---
+[target.'cfg(windows)'.dependencies]
+# Clipboard
+arboard = "3.5"
+# Simulate keypresses
+enigo = "0.2"
+# GUI flotante (glow = OpenGL, mas ligero que wgpu, no activa GPU dedicada/NVIDIA overlay)
+eframe = { version = "0.29", default-features = false, features = ["glow"] }
+egui = "0.29"
+# Windows API (keyboard hook + tray icon)
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_LibraryLoader",
+    "Win32_Graphics_Gdi",
+] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+# NOTA: NO usar panic = "abort" porque mata el proceso si un thread panickea
+
+[lints.rust]
+missing_docs = "warn"
+
+[lints.clippy]
+all = "warn"
+perf = "warn"
+style = "warn"

@@ -1,0 +1,6 @@
+/target/
+*.exe
+*.log*
+logs/
+Cargo.lock
+C:\
