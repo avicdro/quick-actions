@@ -141,12 +141,18 @@ pub struct QuickActionsApp {
     // --- Estado de UI ---
     /// Pestana activa.
     current_tab: Tab,
-    /// Si la ventana esta visible.
+    /// Si la ventana principal esta visible.
     window_open: bool,
     /// Estado visible anterior (para evitar enviar ViewportCommand innecesarios).
     was_visible: bool,
     /// Clipboard cacheado para egui (evita crear uno nuevo en cada frame).
     egui_clipboard: Option<arboard::Clipboard>,
+    /// Si el toast de loading esta visible.
+    toast_visible: bool,
+    /// Estado visible anterior del toast.
+    toast_was_visible: bool,
+    /// Si el toast es de error (rojo) o loading (azul).
+    toast_is_error: bool,
 }
 
 impl QuickActionsApp {
@@ -177,6 +183,9 @@ impl QuickActionsApp {
             window_open: false,
             was_visible: false,
             egui_clipboard: None,
+            toast_visible: false,
+            toast_was_visible: false,
+            toast_is_error: false,
         }
     }
 
@@ -204,10 +213,13 @@ impl QuickActionsApp {
                     self.window_open = true;
                 }
                 UiCommand::SetStatus(msg) => {
-                    // NO abrir la ventana aqui. El status solo es visible
-                    // si la ventana ya esta abierta (por ShowResult, etc.).
-                    // Esto es CRITICO: abrir la ventana roba el foco del editor
-                    // del usuario, lo que rompe Ctrl+C (copy) y Ctrl+V (paste).
+                    // NO abrir la ventana principal. Solo actualizar el toast.
+                    if msg.is_empty() {
+                        self.toast_visible = false;
+                    } else {
+                        self.toast_is_error = msg.starts_with("Error");
+                        self.toast_visible = true;
+                    }
                     self.status = msg;
                 }
                 UiCommand::CloseAll => {
@@ -424,29 +436,152 @@ impl eframe::App for QuickActionsApp {
                     Tab::History => self.draw_history_tab(ui),
                     Tab::Help => self.draw_help_tab(ui),
                 }
-
-                // Barra de estado inferior (loading/error)
-                if !self.status.is_empty() {
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        let is_error = self.status.starts_with("Error");
-                        let color = if is_error {
-                            egui::Color32::from_rgb(200, 50, 50) // Rojo sutil
-                        } else {
-                            egui::Color32::from_rgb(100, 160, 100) // Verde sutil
-                        };
-                        // Spinner animado si esta procesando
-                        if !is_error {
-                            ui.spinner();
-                        }
-                        ui.label(egui::RichText::new(&self.status).color(color));
-                    });
-                }
             });
         }
 
-        // Repaint: rapido con ventana (30ms), lento sin ella (5000ms).
-        let repaint_ms = if self.window_open { 30 } else { 5000 };
+        // Toast overlay: mini-ventana siempre encima, sin decoraciones,
+        // en la esquina inferior derecha. No roba foco.
+        //
+        // show_viewport_immediate debe llamarse en CADA FRAME mientras el
+        // toast este visible. Si solo se llama cuando cambia el estado,
+        // el viewport se cierra inmediatamente (eframe lo considera "no redrawn").
+        if self.toast_visible {
+            let toast_id = egui::ViewportId::from_hash_of("toast");
+            let monitor = ctx
+                .input(|i| i.viewport().monitor_size)
+                .unwrap_or(egui::vec2(1920.0, 1080.0));
+            let toast_w = 280.0;
+            let toast_h = 56.0;
+            let toast_x = monitor.x - toast_w - 24.0;
+            let toast_y = monitor.y - toast_h - 72.0;
+
+            let status = self.status.clone();
+            let is_error = self.toast_is_error;
+
+            ctx.show_viewport_immediate(
+                toast_id,
+                egui::ViewportBuilder::default()
+                    .with_title("")
+                    .with_inner_size([toast_w, toast_h])
+                    .with_position([toast_x, toast_y])
+                    .with_decorations(false)
+                    .with_always_on_top()
+                    .with_taskbar(false)
+                    .with_resizable(false)
+                    .with_transparent(true),
+                move |ctx, _class| {
+                    // Color de fondo segun estado
+                    let bg = if is_error {
+                        egui::Color32::from_rgb(120, 20, 20) // Rojo oscuro
+                    } else {
+                        egui::Color32::from_rgb(25, 25, 35) // Casi negro azulado
+                    };
+
+                    // Borde sutil
+                    let border = if is_error {
+                        egui::Color32::from_rgb(200, 80, 80)
+                    } else {
+                        egui::Color32::from_rgb(80, 100, 160)
+                    };
+
+                    // Animacion de pulso: el borde se aclara y oscila
+                    let time = ctx.input(|i| i.time);
+                    let pulse = (time * 2.0).sin() * 0.5 + 0.5; // 0.0 a 1.0
+                    let border_alpha = 60.0 + pulse * 80.0;
+                    let border_color = egui::Color32::from_rgba_premultiplied(
+                        border.r(),
+                        border.g(),
+                        border.b(),
+                        border_alpha as u8,
+                    );
+
+                    egui::CentralPanel::default()
+                        .frame(
+                            egui::Frame::none()
+                                .fill(bg)
+                                .stroke(egui::Stroke::new(1.5, border_color))
+                                .inner_margin(egui::Margin {
+                                    left: 16.0, right: 16.0, top: 10.0, bottom: 10.0,
+                                }),
+                        )
+                        .show(ctx, |ui| {
+                            ui.horizontal_centered(|ui| {
+                                ui.spacing_mut().item_spacing = egui::vec2(10.0, 0.0);
+
+                                if !is_error {
+                                    // Spinner con tamaño personalizado
+                                    let (rect, _) =
+                                        ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+                                    let painter = ui.painter();
+                                    let time = ui.input(|i| i.time as f32);
+                                    let angle = time * std::f32::consts::TAU;
+                                    let center = rect.center();
+                                    let radius = 8.0;
+                                    // Arc spinner
+                                    painter.circle_stroke(
+                                        center,
+                                        radius,
+                                        egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 140, 220)),
+                                    );
+                                    // Punto girando
+                                    let dot_pos = center + egui::vec2(
+                                        radius * angle.cos(),
+                                        radius * angle.sin(),
+                                    );
+                                    painter.circle_filled(
+                                        dot_pos,
+                                        3.0,
+                                        egui::Color32::from_rgb(140, 180, 255),
+                                    );
+                                } else {
+                                    // Icono de error: circulo con !
+                                    let (rect, _) =
+                                        ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+                                    let painter = ui.painter();
+                                    let center = rect.center();
+                                    painter.circle(
+                                        center,
+                                        9.0,
+                                        egui::Color32::from_rgb(220, 80, 80),
+                                        egui::Stroke::NONE,
+                                    );
+                                    painter.text(
+                                        center,
+                                        egui::Align2::CENTER_CENTER,
+                                        "!",
+                                        egui::FontId::proportional(13.0),
+                                        egui::Color32::WHITE,
+                                    );
+                                }
+
+                                // Texto del estado
+                                let text_color = if is_error {
+                                    egui::Color32::from_rgb(255, 210, 210)
+                                } else {
+                                    egui::Color32::from_rgb(210, 225, 250)
+                                };
+                                ui.label(
+                                    egui::RichText::new(&status)
+                                        .color(text_color)
+                                        .size(14.0)
+                                        .strong(),
+                                );
+                            });
+                        });
+                },
+            );
+        } else if self.toast_was_visible {
+            // Cerrar el toast viewport cuando deja de ser visible
+            ctx.send_viewport_cmd_to(
+                egui::ViewportId::from_hash_of("toast"),
+                egui::ViewportCommand::Close,
+            );
+            self.toast_was_visible = false;
+        }
+
+        // Repaint: rapido con ventana o toast (30ms), lento sin nada (5000ms).
+        let needs_repaint = self.window_open || self.toast_visible;
+        let repaint_ms = if needs_repaint { 30 } else { 5000 };
         ctx.request_repaint_after(std::time::Duration::from_millis(repaint_ms));
     }
 }
