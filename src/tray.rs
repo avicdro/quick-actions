@@ -5,7 +5,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::HBRUSH;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -29,18 +29,23 @@ const ID_TRAY_CONFIG: u32 = 1002;
 const ID_TRAY_EXIT: u32 = 1003;
 const ID_TRAY_AUTOSTART: u32 = 1004;
 const ID_TRAY_PAUSE: u32 = 1005;
+/// Primer ID reservado para items del submenu de modelos (2100.., max 15).
+const ID_MODELO_BASE: u32 = 2100;
+const MAX_MODELOS_MENU: usize = 15;
 
 /// Datos globales del tray icon (solo hay una instancia).
 struct TrayData {
     ui_tx: Sender<UiCommand>,
     config_path: std::path::PathBuf,
     suspended: Arc<AtomicBool>,
+    config: Arc<RwLock<crate::config::Config>>,
+    ollama_models: Arc<Mutex<Vec<String>>>,
+    /// Guardia anti-refetch-duplicado (true = refetch en curso).
+    models_fetching: Arc<std::sync::atomic::AtomicBool>,
 }
 
 static TRAY_DATA: OnceLock<TrayData> = OnceLock::new();
 
-/// Toggle "Iniciar con Windows" (compartido por WM_COMMAND y TPM_RETURNCMD).
-/// Escribe el registro y refleja el estado en config.toml.
 /// Toggle pausa de atajos (compartido por WM_COMMAND y TPM_RETURNCMD).
 /// Alterna el flag compartido y avisa al UI (toast persistente).
 fn toggle_pause() {
@@ -54,6 +59,62 @@ fn toggle_pause() {
             if next { "PAUSADOS" } else { "REACTIVADOS" }
         );
     }
+}
+
+/// Cambia el modelo de Ollama (P3): persiste en config.toml y hot-reload
+/// a la config compartida (las proximas acciones usan el nuevo ya).
+fn set_ollama_model(model: &str) {
+    let Some(data) = TRAY_DATA.get() else {
+        return;
+    };
+
+    // 1. Persistir config.toml (toml_edit preserva comentarios/formato)
+    if let Err(e) = crate::config::Config::write_ollama_model(&data.config_path, model) {
+        tracing::error!("No se pudo persistir modelo en config.toml: {e}");
+        return;
+    }
+
+    // 2. Actualizar la config en memoria (hot-reload)
+    match data.config.write() {
+        Ok(mut c) => {
+            c.ollama.model = model.to_string();
+            tracing::info!("Modelo cambiado a '{model}' (vigente para proximas acciones).");
+        }
+        Err(_) => tracing::error!("config RwLock envenenado al setear modelo"),
+    }
+}
+
+/// Refetch de la lista de modelos en background (torus el submenu
+/// fresco sin bloquear el thread del tray).
+fn refresh_models() {
+    let Some(data) = TRAY_DATA.get() else {
+        return;
+    };
+    // Guardia: si ya hay refetch en curso, no duplicar (no existe Mutex::is_locked).
+    if data
+        .models_fetching
+        .swap(true, std::sync::atomic::Ordering::Relaxed)
+    {
+        return;
+    }
+
+    let Some(ollama_config) = data.config.read().ok().map(|c| c.ollama.clone()) else {
+        return;
+    };
+    let cache = Arc::clone(&data.ollama_models);
+    let fetching = Arc::clone(&data.models_fetching);
+
+    std::thread::spawn(move || {
+        let models = crate::runtime::global()
+            .block_on(crate::ollama::OllamaClient::list_models(&ollama_config));
+        match models {
+            Ok(list) => {
+                *cache.lock().unwrap_or_else(|e| e.into_inner()) = list;
+            }
+            Err(e) => tracing::warn!("Refetch de modelos fallo: {e}"),
+        }
+        fetching.store(false, std::sync::atomic::Ordering::Relaxed);
+    });
 }
 
 /// Toggle "Iniciar con Windows" (compartido por WM_COMMAND y TPM_RETURNCMD).
@@ -83,16 +144,23 @@ fn toggle_autostart() {
 /// * `ui_tx` - Canal para enviar comandos al UI (mostrar ayuda).
 /// * `config_path` - Ruta al config.toml (para abrir con notepad).
 /// * `suspended` - Flag compartido de pausa de atajos (P2).
+/// * `config` - Config compartida con RwLock (hot-reload de modelo — P3).
+/// * `ollama_models` - Cache de modelos instalados (llena en background).
 pub fn init_tray(
     ui_tx: Sender<UiCommand>,
     config_path: std::path::PathBuf,
     suspended: Arc<AtomicBool>,
+    config: Arc<RwLock<crate::config::Config>>,
+    ollama_models: Arc<Mutex<Vec<String>>>,
 ) {
     // Guardar datos globales
     let _ = TRAY_DATA.set(TrayData {
         ui_tx,
         config_path,
         suspended,
+        config,
+        ollama_models,
+        models_fetching: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
 
     std::thread::spawn(move || unsafe {
@@ -254,6 +322,21 @@ extern "system" fn tray_wnd_proc(
                     ID_TRAY_PAUSE => {
                         toggle_pause();
                     }
+                    id if (ID_MODELO_BASE..ID_MODELO_BASE + MAX_MODELOS_MENU as u32)
+                        .contains(&id) =>
+                    {
+                        let models = TRAY_DATA
+                            .get()
+                            .and_then(|d| d.ollama_models.lock().ok().map(|m| (*m).clone()))
+                            .unwrap_or_default();
+                        if let Some(model) = models
+                            .get((id - ID_MODELO_BASE) as usize)
+                            .map(String::as_str)
+                        {
+                            set_ollama_model(model);
+                            refresh_models();
+                        }
+                    }
                     ID_TRAY_EXIT => {
                         tracing::info!("Saliendo via tray menu...");
                         PostQuitMessage(0);
@@ -318,6 +401,75 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         ID_TRAY_PAUSE as usize,
         windows::core::w!("Pausar atajos"),
     );
+
+    // === Submenu "Modelo" (P3) ===
+    let current_model = TRAY_DATA
+        .get()
+        .and_then(|d| d.config.read().ok().map(|c| c.ollama.model.clone()))
+        .unwrap_or_default();
+
+    let models = TRAY_DATA
+        .get()
+        .and_then(|d| d.ollama_models.lock().ok().map(|m| (*m).clone()))
+        .unwrap_or_default();
+
+    match CreatePopupMenu() {
+        Err(_) => {
+            tracing::warn!("CreatePopupMenu fallo para el submenu de modelo.");
+        }
+        Ok(hmenu_model) => {
+            if models.is_empty() {
+                // Cache vacia: refetch en background; el proximo click
+                // tendra la lista (no bloquear el thread del tray).
+                refresh_models();
+                let loading = windows::core::HSTRING::from("(buscando modelos...)");
+                let _ = AppendMenuW(
+                    hmenu_model,
+                    windows::Win32::UI::WindowsAndMessaging::MENU_ITEM_FLAGS(
+                        MF_STRING.0 | windows::Win32::UI::WindowsAndMessaging::MF_DISABLED.0,
+                    ),
+                    0,
+                    &loading,
+                );
+            } else {
+                for (i, model) in models.iter().take(MAX_MODELOS_MENU).enumerate() {
+                    let flags = if *model == current_model {
+                        windows::Win32::UI::WindowsAndMessaging::MENU_ITEM_FLAGS(
+                            MF_STRING.0 | MF_CHECKED.0,
+                        )
+                    } else {
+                        MF_STRING
+                    };
+                    let text = windows::core::HSTRING::from(model);
+                    let _ = AppendMenuW(
+                        hmenu_model,
+                        flags,
+                        (ID_MODELO_BASE + i as u32) as usize,
+                        &text,
+                    );
+                }
+            }
+
+            // Label del root: estado actual
+            let root_label = windows::core::HSTRING::from(format!(
+                "Modelo: {}",
+                if current_model.is_empty() {
+                    "?"
+                } else {
+                    &current_model
+                }
+            ));
+            let _ = AppendMenuW(
+                hmenu,
+                windows::Win32::UI::WindowsAndMessaging::MENU_ITEM_FLAGS(
+                    MF_STRING.0 | windows::Win32::UI::WindowsAndMessaging::MF_POPUP.0,
+                ),
+                hmenu_model.0 as usize, // MF_POPUP: uidNew = HMENU del submenu
+                &root_label,
+            );
+        }
+    }
+
     let _ = AppendMenuW(hmenu, MF_STRING, 0, windows::core::w!(""));
     let _ = AppendMenuW(
         hmenu,
@@ -360,6 +512,19 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         }
         ID_TRAY_PAUSE => {
             toggle_pause();
+        }
+        id if (ID_MODELO_BASE..ID_MODELO_BASE + MAX_MODELOS_MENU as u32).contains(&id) => {
+            let models = TRAY_DATA
+                .get()
+                .and_then(|d| d.ollama_models.lock().ok().map(|m| (*m).clone()))
+                .unwrap_or_default();
+            if let Some(model) = models
+                .get((id - ID_MODELO_BASE) as usize)
+                .map(String::as_str)
+            {
+                set_ollama_model(model);
+                refresh_models();
+            }
         }
         ID_TRAY_EXIT => {
             tracing::info!("Saliendo via tray menu...");

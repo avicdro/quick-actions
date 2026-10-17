@@ -210,6 +210,26 @@ enabled = false
     /// Devuelve `AppError::Config` si falla leer, escribir, o si el TOML es
     /// invalido (en ese caso no modifica nada).
     pub fn write_autostart(path: &Path, enabled: bool) -> Result<()> {
+        Self::write_config_key(path, "app", "autostart", enabled)
+    }
+
+    /// Actualiza `[ollama] model` en `config.toml` (misma semantica que
+    /// [`Config::write_autostart`]).
+    ///
+    /// # Errors
+    ///
+    /// Si falla leer/escribir o el TOML es invalido.
+    pub fn write_ollama_model(path: &Path, model: &str) -> Result<()> {
+        Self::write_config_key(path, "ollama", "model", model)
+    }
+
+    /// Setea `doc[section][key] = value` preservando el resto del documento.
+    fn write_config_key(
+        path: &Path,
+        section: &str,
+        key: &str,
+        value: impl Into<toml_edit::Value>,
+    ) -> Result<()> {
         let content = if path.exists() {
             std::fs::read_to_string(path)
                 .map_err(|e| AppError::Config(format!("No se pudo leer config.toml: {e}")))?
@@ -221,12 +241,12 @@ enabled = false
             .parse::<toml_edit::DocumentMut>()
             .map_err(|e| AppError::Config(format!("Error parseando config.toml: {e}")))?;
 
-        doc["app"]["autostart"] = toml_edit::value(enabled);
+        doc[section][key] = toml_edit::value(value);
 
         std::fs::write(path, doc.to_string())
             .map_err(|e| AppError::Config(format!("No se pudo escribir config.toml: {e}")))?;
 
-        tracing::info!("config.toml: [app] autostart = {enabled}");
+        tracing::info!("config.toml: [{section}] {key} actualizado");
         Ok(())
     }
 }
@@ -355,6 +375,41 @@ autostart = false
         assert!(std::fs::read_to_string(&missing)
             .unwrap()
             .contains("autostart = true"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_ollama_model_preserves_and_flips() {
+        let dir = std::env::temp_dir().join("qa-test-write-model");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("config.toml");
+
+        let original = r#"# comentario
+[ollama]
+model = "gemma4:cloud" # modelo actual
+timeout_seconds = 90
+
+[app]
+autostart = false
+"#;
+        std::fs::write(&path, original).unwrap();
+
+        Config::write_ollama_model(&path, "qwen3:32b").unwrap();
+        let out = std::fs::read_to_string(&path).unwrap();
+
+        assert!(out.contains("# comentario"));
+        assert!(out.contains("model = \"qwen3:32b\""));
+        assert!(out.contains("timeout_seconds = 90"));
+        assert!(out.contains("[app]"));
+        // Nota: el comentario EN-LINEA de la linea reemplazada ("# modelo
+        // actual") NO se preserva (es decor del item reemplazado); el resto
+        // del archivo si (comentarios propios + secciones). Documentado en
+        // docs/plans/improvements-v0.3.md P3.
+
+        // Y el TOML parsea con el modelo nuevo
+        let c: Config = toml::from_str(&out).unwrap();
+        assert_eq!(c.ollama.model, "qwen3:32b");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

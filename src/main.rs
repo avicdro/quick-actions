@@ -24,8 +24,7 @@ fn main() {
 #[cfg(windows)]
 fn windows_main() {
     use std::sync::mpsc::channel;
-    use std::sync::Arc;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex, RwLock};
 
     use quick_actions::clipboard::ClipboardManager;
     use quick_actions::config::Config;
@@ -65,7 +64,8 @@ fn windows_main() {
     let config = match Config::load_or_create_default() {
         Ok(c) => {
             tracing::info!("Config cargada. Modelo: {}", c.ollama.model);
-            Arc::new(c)
+            // RwLock compartido: tray puede cambiar el modelo on-the-fly (P3)
+            Arc::new(RwLock::new(c))
         }
         Err(e) => {
             let msg =
@@ -76,13 +76,15 @@ fn windows_main() {
         }
     };
 
-    if !config.hotkeys.enabled {
+    if !config.read().map(|c| c.hotkeys.enabled).unwrap_or(true) {
         tracing::warn!("Hotkeys desactivados en config.toml. Saliendo.");
         return;
     }
 
     // === 2.5. Auto-arranque: alinear registro con config ([app] autostart) ===
-    quick_actions::autostart::sync_with_config(config.app.autostart);
+    quick_actions::autostart::sync_with_config(
+        config.read().map(|c| c.app.autostart).unwrap_or(false),
+    );
 
     // === 3. Crear canales ===
     let (hotkey_tx, hotkey_rx) = channel::<HotkeyCommand>();
@@ -102,20 +104,55 @@ fn windows_main() {
         }
     };
 
+    // === 4. Inicializar clipboard e historial ===
+    // Cache de modelos para el submenu del tray (llena en background — P3).
+    let ollama_models = Arc::new(Mutex::new(Vec::<String>::new()));
+
+    {
+        let models_cache = Arc::clone(&ollama_models);
+        let config_snapshot = config.read().ok().map(|c| c.ollama.clone());
+        if let Some(ollama_config) = config_snapshot {
+            std::thread::spawn(move || {
+                let runtime = quick_actions::runtime::global();
+                match runtime.block_on(quick_actions::ollama::OllamaClient::list_models(
+                    &ollama_config,
+                )) {
+                    Ok(models) => {
+                        tracing::info!("Ollama: {} modelos instalados", models.len());
+                        *models_cache.lock().unwrap_or_else(|e| e.into_inner()) = models;
+                    }
+                    Err(e) => {
+                        tracing::warn!("No se pudo listar modelos de Ollama: {e}");
+                    }
+                }
+            });
+        }
+    }
+
+    let history_max_entries = config
+        .read()
+        .map(|c| c.ui.history_max_entries)
+        .unwrap_or(50);
     let history_path = exe_dir.join("history.json");
-    let history = match History::load_or_create(&history_path, config.ui.history_max_entries) {
+    let history = match History::load_or_create(&history_path, history_max_entries) {
         Ok(h) => Arc::new(Mutex::new(h)),
         Err(e) => {
             tracing::error!("Error cargando historial: {e}");
             // No es critico, seguir sin historial
-            Arc::new(Mutex::new(History::empty(config.ui.history_max_entries)))
+            Arc::new(Mutex::new(History::empty(history_max_entries)))
         }
     };
 
     // === 5. Iniciar tray icon (thread dedicado) ===
     let ui_tx_for_tray = ui_channels.tx.clone();
     let config_path_for_tray = exe_dir.join("config.toml");
-    init_tray(ui_tx_for_tray, config_path_for_tray, Arc::clone(&suspended));
+    init_tray(
+        ui_tx_for_tray,
+        config_path_for_tray,
+        Arc::clone(&suspended),
+        Arc::clone(&config),
+        Arc::clone(&ollama_models),
+    );
     tracing::info!("Tray icon iniciado.");
 
     // === 6. Iniciar hook de teclado (thread dedicado) ===

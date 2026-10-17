@@ -1,7 +1,7 @@
 use eframe::egui;
 use std::sync::mpsc::Receiver;
 use std::sync::OnceLock;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::actions;
 use crate::clipboard::ClipboardManager;
@@ -116,7 +116,7 @@ pub struct QuickActionsApp {
     /// Canal hotkeys (hook -> app)
     hotkey_rx: Receiver<HotkeyCommand>,
     /// Configuracion
-    config: Arc<Config>,
+    config: Arc<RwLock<Config>>,
     /// Clipboard compartido
     clipboard: Arc<ClipboardManager>,
     /// Historial compartido
@@ -164,7 +164,7 @@ impl QuickActionsApp {
     pub fn new(
         ui_rx: Receiver<UiCommand>,
         hotkey_rx: Receiver<HotkeyCommand>,
-        config: Arc<Config>,
+        config: Arc<RwLock<Config>>,
         clipboard: Arc<ClipboardManager>,
         history: Arc<Mutex<History>>,
         ui_tx: std::sync::mpsc::Sender<UiCommand>,

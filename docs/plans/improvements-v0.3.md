@@ -42,7 +42,15 @@
   - Tray: ítem *"Pausar atajos"* con ✓, toggle → `UiCommand::SetPaused(bool)`
   - UI: toast **"Pausado — atajos desactivados"** con icono ámbar de dos barras, persistente hasta reanudar
   - Session-only (no se persiste en config — semántica "modo reunión")
-- [ ] **P3 — Modelo Ollama configurable on the fly** — selector en UI ayuda/tray guarda en config.toml `(edit atomic config.toml = escribdor atomic)`; recarga config en caliente
+- [x] **P3 — Modelo Ollama configurable on the fly** (COMPLETADO 2026-10-17) —
+  - `ollama.rs`: `list_models()` via `GET /api/tags` (+ `endpoint_base()` derivado del endpoint de generación, con tests)
+  - Tray: submenu dinámico *"Modelo: {actual}"* con los modelos instalados (✓ en el vigente); cache `Arc<Mutex<Vec>>` llenada en background al arrancar + refetch tras cada cambio (guardia atomic anti-duplicado); nunca bloquea el click del menú
+  - Si la cache está vacía: ítem "(buscando modelos...)" + refetch en background → reaparece el menú y ya están
+  - Handler `ID_MODELO_BASE..+15`: `set_ollama_model()` persiste en `config.toml` (toml_edit) y hot-reload en `Arc<RwLock<Config>>` compartido — las próximas acciones ya usan el modelo nuevo
+  - `config.rs`: helper común `write_config_key()` (reusado por `write_autostart` y `write_ollama_model`) + test roundtrip
+  - Hot-reload: `config: Arc<RwLock<Config>>` para App y tray; `handle_command` lee snapshot al inicio de cada acción
+  - Nota documentada: el comentario en-línea de la línea reemplazada se pierde, el resto del archivo se preserva
+  - 26 tests + clippy + cross-check Windows OK
 - [ ] **P4 — Autoupdate check** — al iniciar, GET `https://api.github.com/repos/{owner}/{repo}/releases/latest`, si tag > `CARGO_PKG_VERSION` → toast + click abre release (sin installar, solo avisar)
 - [ ] **P5 — Instalador/desinstalador** — script PowerShell `install.ps1`: copia a `%LOCALAPPDATA%\QuickActions`, config → `%APPDATA%\quick-actions\`, symlink en autostart; `uninstall.ps1` inverso
 - [ ] **P6 — Íconos tray/UI reales** — `.ico` embebido (`include_bytes!`) para tray y viewport
@@ -78,3 +86,4 @@ Ver detalle completo en `IMPROVEMENTS.md` (fases 1–5). Resumen del orden acord
 | 2026-10-17 | rustls 0.23.46 (vuln fix) | ea0c889 | Dependabot PR #1 cerrado |
 | 2026-10-17 | P1 completado | `feat: P1 auto-arranque...` (24d77a0) | 23 tests + cross-check OK |
 | 2026-10-17 | P2 completado | `feat: P2 pausa de hotkeys...` (54fbede) | passthrough total + toast Pausado |
+| 2026-10-17 | P3 completado | `feat: P3 modelo on-the-fly...` | submenu tray + hot-reload (26 tests) |

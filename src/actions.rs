@@ -1,10 +1,10 @@
 //! Handlers de comandos de hotkey (corregir, traducir, etc.).
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::clipboard::ClipboardManager;
 use crate::config::Config;
-use crate::error::Result;
+use crate::error::{AppError, Result};
 use crate::history::History;
 use crate::hotkeys::HotkeyCommand;
 use crate::key_sim::KeySimulator;
@@ -39,13 +39,21 @@ pub fn help_text() -> String {
 }
 
 /// Procesa un comando de hotkey.
+///
+/// La config se lee del `RwLock` compartido al inicio del handler: el modelo
+/// vigente es el que el usuario haya seleccionado en el tray (hot-reload P3).
 pub fn handle_command(
     cmd: HotkeyCommand,
-    config: &Config,
+    config: &Arc<RwLock<Config>>,
     clipboard: &Arc<ClipboardManager>,
     history: &Arc<Mutex<History>>,
     ui_tx: &std::sync::mpsc::Sender<UiCommand>,
 ) -> Result<()> {
+    let config = config
+        .read()
+        .ok()
+        .map(|c| c.clone())
+        .ok_or_else(|| AppError::msg("Error de lock en config (poisoned)"))?;
     let ollama = OllamaClient::new(config.ollama.clone());
     let result = match cmd {
         HotkeyCommand::Correct => handle_correct(clipboard, history, ui_tx, ollama),
