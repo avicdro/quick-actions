@@ -27,7 +27,15 @@
 
 ## 🗺️ Rápidos de producto (siguiente bloque)
 
-- [ ] **P1 — Auto-arranque con Windows** — toggle en tray + config (`[app] autostart = false`), escribe/elimina `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+- [x] **P1 — Auto-arranque con Windows** (COMPLETADO 2026-10-17) —
+  - `autostart.rs` (nuevo, windows-only): lee/escribe/borra `HKCU\...\CurrentVersion\Run` valor `QuickActions` = exe actual entre comillas; sin admin
+  - `config.toml` → `[app] autostart = false` (`AppConfig`)
+  - Tray: ítem "Iniciar con Windows" con ✓ (MF_CHECKED según estado real del registro), toggle escribe registro Y config.toml
+  - Escritura de config via `toml_edit` (preserva comentarios/formato) + test cross-platform de roundtrip
+  - `sync_with_config()` al arranque: config `true` repara/recrea la entrada (exe movido); config `false` NO deshace toggles de tray (el registro manda a partir de ahí)
+  - Cargo: +features `Win32_System_Registry`, `Win32_Security`; +dep `toml_edit`
+  - Verificado: 23 tests + clippy + cross-check Windows OK
+
 - [ ] **P2 — Pausa de hotkeys** — checkbox en tray "Suspended". `HotkeyCommand`/listener consulta flag `Arc<AtomicBool>`; toasts ignorados y hook hace passthrough de CapsLock
 - [ ] **P3 — Modelo Ollama configurable on the fly** — selector en UI ayuda/tray guarda en config.toml `(edit atomic config.toml = escribdor atomic)`; recarga config en caliente
 - [ ] **P4 — Autoupdate check** — al iniciar, GET `https://api.github.com/repos/{owner}/{repo}/releases/latest`, si tag > `CARGO_PKG_VERSION` → toast + click abre release (sin installar, solo avisar)
@@ -62,3 +70,5 @@ Ver detalle completo en `IMPROVEMENTS.md` (fases 1–5). Resumen del orden acord
 |-------|------|--------|------|
 | 2026-10-17 | plan creado | — | v0.3 |
 | 2026-10-17 | R1–R6 completados | `R1-R6: quick wins + rustfmt + cfg(windows) main` | fmt+clippy+20 tests OK |
+| 2026-10-17 | rustls 0.23.46 (vuln fix) | ea0c889 | Dependabot PR #1 cerrado |
+| 2026-10-17 | P1 completado | `feat: P1 auto-arranque...` | 23 tests + cross-check OK |

@@ -81,6 +81,9 @@ fn windows_main() {
         return;
     }
 
+    // === 2.5. Auto-arranque: alinear registro con config ([app] autostart) ===
+    quick_actions::autostart::sync_with_config(config.app.autostart);
+
     // === 3. Crear canales ===
     let (hotkey_tx, hotkey_rx) = channel::<HotkeyCommand>();
     let ui_channels = UiChannels::new();

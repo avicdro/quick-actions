@@ -13,6 +13,8 @@ pub struct Config {
     pub ui: UiConfig,
     /// Configuracion de hotkeys.
     pub hotkeys: HotkeysConfig,
+    /// Configuracion de la app en general (auto-arranque, etc).
+    pub app: AppConfig,
     /// Rutas de aplicaciones externas.
     pub paths: PathsConfig,
     /// Configuracion futura del launcher.
@@ -80,6 +82,16 @@ impl Default for HotkeysConfig {
     fn default() -> Self {
         Self { enabled: true }
     }
+}
+
+/// Configuracion general de la app.
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct AppConfig {
+    /// Iniciar automaticamente con Windows (entrada en
+    /// `HKCU\...\CurrentVersion\Run`). No interfiere con toggles manuales
+    /// desde el tray (ver docs/plans/improvements-v0.3.md, P1).
+    pub autostart: bool,
 }
 
 /// Rutas a ejecutables externos.
@@ -173,6 +185,9 @@ history_max_entries = 50
 [hotkeys]
 enabled = true
 
+[app]
+autostart = false
+
 [paths]
 chrome = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
 
@@ -183,6 +198,36 @@ enabled = false
 enabled = false
 "#
         .to_string()
+    }
+
+    /// Actualiza `[app] autostart` en `config.toml` preservando el resto del
+    /// archivo (comentarios y formato via toml_edit).
+    ///
+    /// Si la seccion `[app]` no existe, se crea al final del archivo.
+    ///
+    /// # Errors
+    ///
+    /// Devuelve `AppError::Config` si falla leer, escribir, o si el TOML es
+    /// invalido (en ese caso no modifica nada).
+    pub fn write_autostart(path: &Path, enabled: bool) -> Result<()> {
+        let content = if path.exists() {
+            std::fs::read_to_string(path)
+                .map_err(|e| AppError::Config(format!("No se pudo leer config.toml: {e}")))?
+        } else {
+            Self::default_toml()
+        };
+
+        let mut doc = content
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| AppError::Config(format!("Error parseando config.toml: {e}")))?;
+
+        doc["app"]["autostart"] = toml_edit::value(enabled);
+
+        std::fs::write(path, doc.to_string())
+            .map_err(|e| AppError::Config(format!("No se pudo escribir config.toml: {e}")))?;
+
+        tracing::info!("config.toml: [app] autostart = {enabled}");
+        Ok(())
     }
 }
 
@@ -246,5 +291,76 @@ model = "test-model"
         assert_eq!(c.ollama.endpoint, "http://localhost:11434/api/generate");
         assert_eq!(c.ui.font_size, 16);
         assert!(c.hotkeys.enabled);
+    }
+
+    #[test]
+    fn config_app_autostart_default_false() {
+        let c = Config::default();
+        assert!(!c.app.autostart);
+    }
+
+    #[test]
+    fn config_parse_app_section() {
+        let toml = r#"
+[app]
+autostart = true
+"#;
+        let c: Config = toml::from_str(toml).unwrap();
+        assert!(c.app.autostart);
+    }
+
+    #[test]
+    fn write_autostart_flips_value_and_preserves_comments() {
+        let dir = std::env::temp_dir().join("qa-test-write-autostart");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("config.toml");
+
+        // 1. Archivo con comentarios y formato propio
+        let original = r#"# mi config personalizada
+[ollama]
+model = "mi-modelo" # modelo chico
+
+[app]
+autostart = false
+"#;
+        std::fs::write(&path, original).unwrap();
+
+        Config::write_autostart(&path, true).unwrap();
+        let out = std::fs::read_to_string(&path).unwrap();
+
+        assert!(out.contains("# mi config personalizada"));
+        assert!(out.contains("# modelo chico"));
+        assert!(out.contains("autostart = true"));
+        assert!(c_of(&path).app.autostart);
+
+        // 2. Volver a false
+        Config::write_autostart(&path, false).unwrap();
+        let out = std::fs::read_to_string(&path).unwrap();
+        assert!(out.contains("autostart = false"));
+        assert!(out.contains("model = \"mi-modelo\""));
+
+        // 3. Archivo sin seccion [app]: se crea y se agrega la clave
+        let no_app = "[hotkeys]\nenabled = true\n";
+        std::fs::write(&path, no_app).unwrap();
+        Config::write_autostart(&path, true).unwrap();
+        let out = std::fs::read_to_string(&path).unwrap();
+        assert!(out.contains("[hotkeys]"));
+        assert!(out.contains("autostart = true"));
+        assert!(c_of(&path).hotkeys.enabled);
+
+        // 4. Archivo inexistente: crea default con el flag pedido
+        let missing = dir.join("no-existe.toml");
+        Config::write_autostart(&missing, true).unwrap();
+        assert!(missing.exists());
+        assert!(std::fs::read_to_string(&missing)
+            .unwrap()
+            .contains("autostart = true"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn c_of(path: &Path) -> Config {
+        let s = std::fs::read_to_string(path).unwrap();
+        toml::from_str(&s).unwrap()
     }
 }

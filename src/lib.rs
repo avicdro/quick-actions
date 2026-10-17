@@ -14,6 +14,8 @@ pub mod text_utils;
 #[cfg(windows)]
 pub mod actions;
 #[cfg(windows)]
+pub mod autostart;
+#[cfg(windows)]
 pub mod clipboard;
 #[cfg(windows)]
 pub mod hotkeys;

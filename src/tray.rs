@@ -14,10 +14,10 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW,
     GetCursorPos, GetMessageW, LoadIconW, PostQuitMessage, RegisterClassExW, SetForegroundWindow,
-    ShowWindow, TrackPopupMenu, TranslateMessage, IDC_ARROW, IDI_APPLICATION, MF_STRING, MSG,
-    SW_HIDE, TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TRACK_POPUP_MENU_FLAGS,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WM_COMMAND, WM_DESTROY, WM_LBUTTONUP, WM_QUIT, WM_RBUTTONUP,
-    WM_USER, WNDCLASSEXW,
+    ShowWindow, TrackPopupMenu, TranslateMessage, IDC_ARROW, IDI_APPLICATION, MF_CHECKED,
+    MF_STRING, MSG, SW_HIDE, TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+    TRACK_POPUP_MENU_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE, WM_COMMAND, WM_DESTROY, WM_LBUTTONUP,
+    WM_QUIT, WM_RBUTTONUP, WM_USER, WNDCLASSEXW,
 };
 
 use crate::ui::UiCommand;
@@ -26,6 +26,7 @@ const WM_TRAYICON: u32 = WM_USER + 1;
 const ID_TRAY_SHOW_HELP: u32 = 1001;
 const ID_TRAY_CONFIG: u32 = 1002;
 const ID_TRAY_EXIT: u32 = 1003;
+const ID_TRAY_AUTOSTART: u32 = 1004;
 
 /// Datos globales del tray icon (solo hay una instancia).
 struct TrayData {
@@ -34,6 +35,26 @@ struct TrayData {
 }
 
 static TRAY_DATA: OnceLock<TrayData> = OnceLock::new();
+
+/// Toggle "Iniciar con Windows" (compartido por WM_COMMAND y TPM_RETURNCMD).
+/// Escribe el registro y refleja el estado en config.toml.
+fn toggle_autostart() {
+    let next_on = !crate::autostart::is_enabled();
+    match crate::autostart::set_enabled(next_on) {
+        Ok(()) => {
+            if let Some(data) = TRAY_DATA.get() {
+                if let Err(e) = crate::config::Config::write_autostart(&data.config_path, next_on) {
+                    tracing::warn!("Registro actualizado pero config no se guardo: {e}");
+                }
+            }
+            tracing::info!(
+                "Auto-arranque {} desde el tray.",
+                if next_on { "ACTIVADO" } else { "DESACTIVADO" }
+            );
+        }
+        Err(e) => tracing::error!("Fallo toggle auto-arranque: {e}"),
+    }
+}
 
 /// Inicia el tray icon en un thread dedicado.
 ///
@@ -198,6 +219,9 @@ extern "system" fn tray_wnd_proc(
                                 .spawn();
                         }
                     }
+                    ID_TRAY_AUTOSTART => {
+                        toggle_autostart();
+                    }
                     ID_TRAY_EXIT => {
                         tracing::info!("Saliendo via tray menu...");
                         PostQuitMessage(0);
@@ -236,6 +260,18 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         ID_TRAY_CONFIG as usize,
         windows::core::w!("Configuracion"),
     );
+    let autostart_on = crate::autostart::is_enabled();
+    let autostart_flags = if autostart_on {
+        windows::Win32::UI::WindowsAndMessaging::MENU_ITEM_FLAGS(MF_STRING.0 | MF_CHECKED.0)
+    } else {
+        MF_STRING
+    };
+    let _ = AppendMenuW(
+        hmenu,
+        autostart_flags,
+        ID_TRAY_AUTOSTART as usize,
+        windows::core::w!("Iniciar con Windows"),
+    );
     let _ = AppendMenuW(hmenu, MF_STRING, 0, windows::core::w!(""));
     let _ = AppendMenuW(
         hmenu,
@@ -272,6 +308,9 @@ unsafe fn show_tray_menu(hwnd: HWND) {
                     .arg(&data.config_path)
                     .spawn();
             }
+        }
+        ID_TRAY_AUTOSTART => {
+            toggle_autostart();
         }
         ID_TRAY_EXIT => {
             tracing::info!("Saliendo via tray menu...");

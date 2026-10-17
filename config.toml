@@ -17,6 +17,12 @@ history_max_entries = 50    # Maximo entradas en historial de correcciones
 # pero puedes desactivar modulos enteros aqui:
 enabled = true
 
+[app]
+# Iniciar automaticamente con Windows (HKCU\...\Run).
+# Solo define el estado inicial; cuando lo toggles desde el tray, el
+# registro manda y esta linea se actualiza automaticamente.
+autostart = false
+
 [paths]
 chrome = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
 
