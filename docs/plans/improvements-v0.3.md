@@ -36,7 +36,12 @@
   - Cargo: +features `Win32_System_Registry`, `Win32_Security`; +dep `toml_edit`
   - Verificado: 23 tests + clippy + cross-check Windows OK
 
-- [ ] **P2 — Pausa de hotkeys** — checkbox en tray "Suspended". `HotkeyCommand`/listener consulta flag `Arc<AtomicBool>`; toasts ignorados y hook hace passthrough de CapsLock
+- [x] **P2 — Pausa de hotkeys** (COMPLETADO 2026-10-17) —
+  - `Arc<AtomicBool>` compartido main → hook (win_hook) y tray
+  - `keyboard_proc`: si suspended → passthrough total del teclado (ni Alt+combos se interceptan)
+  - Tray: ítem *"Pausar atajos"* con ✓, toggle → `UiCommand::SetPaused(bool)`
+  - UI: toast **"Pausado — atajos desactivados"** con icono ámbar de dos barras, persistente hasta reanudar
+  - Session-only (no se persiste en config — semántica "modo reunión")
 - [ ] **P3 — Modelo Ollama configurable on the fly** — selector en UI ayuda/tray guarda en config.toml `(edit atomic config.toml = escribdor atomic)`; recarga config en caliente
 - [ ] **P4 — Autoupdate check** — al iniciar, GET `https://api.github.com/repos/{owner}/{repo}/releases/latest`, si tag > `CARGO_PKG_VERSION` → toast + click abre release (sin installar, solo avisar)
 - [ ] **P5 — Instalador/desinstalador** — script PowerShell `install.ps1`: copia a `%LOCALAPPDATA%\QuickActions`, config → `%APPDATA%\quick-actions\`, symlink en autostart; `uninstall.ps1` inverso
@@ -71,4 +76,5 @@ Ver detalle completo en `IMPROVEMENTS.md` (fases 1–5). Resumen del orden acord
 | 2026-10-17 | plan creado | — | v0.3 |
 | 2026-10-17 | R1–R6 completados | `R1-R6: quick wins + rustfmt + cfg(windows) main` | fmt+clippy+20 tests OK |
 | 2026-10-17 | rustls 0.23.46 (vuln fix) | ea0c889 | Dependabot PR #1 cerrado |
-| 2026-10-17 | P1 completado | `feat: P1 auto-arranque...` | 23 tests + cross-check OK |
+| 2026-10-17 | P1 completado | `feat: P1 auto-arranque...` (24d77a0) | 23 tests + cross-check OK |
+| 2026-10-17 | P2 completado | `feat: P2 pausa de hotkeys...` (54fbede) | passthrough total + toast Pausado |
