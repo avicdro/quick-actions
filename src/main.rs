@@ -88,6 +88,9 @@ fn windows_main() {
     let (hotkey_tx, hotkey_rx) = channel::<HotkeyCommand>();
     let ui_channels = UiChannels::new();
 
+    // Flag compartido de pausa de atajos (tray <-> hook) — P2.
+    let suspended = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
     // === 4. Inicializar clipboard e historial ===
     let clipboard = match ClipboardManager::new() {
         Ok(c) => Arc::new(c),
@@ -112,11 +115,12 @@ fn windows_main() {
     // === 5. Iniciar tray icon (thread dedicado) ===
     let ui_tx_for_tray = ui_channels.tx.clone();
     let config_path_for_tray = exe_dir.join("config.toml");
-    init_tray(ui_tx_for_tray, config_path_for_tray);
+    init_tray(ui_tx_for_tray, config_path_for_tray, Arc::clone(&suspended));
     tracing::info!("Tray icon iniciado.");
 
     // === 6. Iniciar hook de teclado (thread dedicado) ===
     init_sender(hotkey_tx);
+    quick_actions::hotkeys::init_suspended(Arc::clone(&suspended));
     start_listener();
     tracing::info!("Hotkeys iniciados. CapsLock+G/T/R/Enter/V/H listos.");
 

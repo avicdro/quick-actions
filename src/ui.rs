@@ -91,6 +91,8 @@ pub enum UiCommand {
     ShowHelp(String),
     /// Actualizar el estado (loading/error). Cadena vacia = sin estado.
     SetStatus(String),
+    /// Pausar/resumir los atajos (toast persistente "Pausado").
+    SetPaused(bool),
     /// Cerrar todas las ventanas.
     CloseAll,
 }
@@ -153,6 +155,8 @@ pub struct QuickActionsApp {
     toast_was_visible: bool,
     /// Si el toast es de error (rojo) o loading (azul).
     toast_is_error: bool,
+    /// Si los atajos estan pausados (toast "Pausado" persistente).
+    paused: bool,
 }
 
 impl QuickActionsApp {
@@ -186,6 +190,7 @@ impl QuickActionsApp {
             toast_visible: false,
             toast_was_visible: false,
             toast_is_error: false,
+            paused: false,
         }
     }
 
@@ -221,6 +226,18 @@ impl QuickActionsApp {
                         self.toast_visible = true;
                     }
                     self.status = msg;
+                }
+                UiCommand::SetPaused(v) => {
+                    self.paused = v;
+                    if v {
+                        self.status = "Pausado — atajos desactivados".to_string();
+                        self.toast_visible = true;
+                    } else {
+                        // Reanudar: limpiar status para que el proximo
+                        // SetStatus de una accion defina el toast.
+                        self.status = String::new();
+                        self.toast_visible = false;
+                    }
                 }
                 UiCommand::CloseAll => {
                     self.window_open = false;
@@ -461,6 +478,7 @@ impl eframe::App for QuickActionsApp {
 
             let status = self.status.clone();
             let is_error = self.toast_is_error;
+            let paused = self.paused;
 
             ctx.show_viewport_immediate(
                 toast_id,
@@ -515,7 +533,31 @@ impl eframe::App for QuickActionsApp {
                             ui.horizontal_centered(|ui| {
                                 ui.spacing_mut().item_spacing = egui::vec2(10.0, 0.0);
 
-                                if !is_error {
+                                if paused {
+                                    // Icono de pausa: circulo ambar con dos barras
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(20.0, 20.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    let painter = ui.painter();
+                                    let center = rect.center();
+                                    painter.circle_filled(
+                                        center,
+                                        9.0,
+                                        egui::Color32::from_rgb(232, 176, 60),
+                                    );
+                                    let bar_color = egui::Color32::from_rgb(45, 38, 22);
+                                    for dx in [-3.0f32, 3.0] {
+                                        painter.rect_filled(
+                                            egui::Rect::from_center_size(
+                                                center + egui::vec2(dx, 0.0),
+                                                egui::vec2(2.8, 10.0),
+                                            ),
+                                            1.0,
+                                            bar_color,
+                                        );
+                                    }
+                                } else if !is_error {
                                     // Spinner con tamaño personalizado
                                     let (rect, _) = ui.allocate_exact_size(
                                         egui::vec2(20.0, 20.0),
@@ -569,6 +611,8 @@ impl eframe::App for QuickActionsApp {
                                 // Texto del estado
                                 let text_color = if is_error {
                                     egui::Color32::from_rgb(255, 210, 210)
+                                } else if paused {
+                                    egui::Color32::from_rgb(250, 230, 190)
                                 } else {
                                     egui::Color32::from_rgb(210, 225, 250)
                                 };

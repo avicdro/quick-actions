@@ -1,5 +1,6 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -12,13 +13,26 @@ use crate::hotkeys::HotkeyCommand;
 /// Canal global para enviar comandos desde el hook al thread principal.
 static SENDER: OnceLock<Sender<HotkeyCommand>> = OnceLock::new();
 
+/// Cuando es `true`, el hook hace passthrough total de TODO el teclado
+/// (no intercepta atajos). Toggle desde el tray ("Pausar" — P2).
+static SUSPENDED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+
 /// Inicializa el sender global. Debe llamarse antes de [`run_hook_loop`].
 pub fn init_sender(sender: Sender<HotkeyCommand>) {
     let _ = SENDER.set(sender);
 }
 
+/// Registra el flag compartido de pausa. Antes de [`run_hook_loop`].
+pub fn init_suspended(flag: Arc<AtomicBool>) {
+    let _ = SUSPENDED.set(flag);
+}
+
 fn get_sender() -> Option<&'static Sender<HotkeyCommand>> {
     SENDER.get()
+}
+
+fn is_suspended() -> bool {
+    SUSPENDED.get().is_some_and(|f| f.load(Ordering::Relaxed))
 }
 
 /// Inicia el message pump con el hook de teclado de bajo nivel.
@@ -71,6 +85,12 @@ extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_param: LPARAM) 
     if n_code < 0 {
         // SAFETY: n_code < 0 significa que el hook no debe procesar el evento.
         // Pasamos directamente al siguiente hook de la cadena.
+        return unsafe { CallNextHookEx(None, n_code, w_param, l_param) };
+    }
+
+    // Pausado (P2): passthrough total, como si el hook ni estuviera.
+    if is_suspended() {
+        // SAFETY: Pasar el evento al siguiente hook de la cadena.
         return unsafe { CallNextHookEx(None, n_code, w_param, l_param) };
     }
 

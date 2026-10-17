@@ -3,8 +3,9 @@
 //! Implementacion directa usando Shell_NotifyIconW + TrackPopupMenu.
 //! No depende de crates externas de tray.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::HBRUSH;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -27,14 +28,33 @@ const ID_TRAY_SHOW_HELP: u32 = 1001;
 const ID_TRAY_CONFIG: u32 = 1002;
 const ID_TRAY_EXIT: u32 = 1003;
 const ID_TRAY_AUTOSTART: u32 = 1004;
+const ID_TRAY_PAUSE: u32 = 1005;
 
 /// Datos globales del tray icon (solo hay una instancia).
 struct TrayData {
     ui_tx: Sender<UiCommand>,
     config_path: std::path::PathBuf,
+    suspended: Arc<AtomicBool>,
 }
 
 static TRAY_DATA: OnceLock<TrayData> = OnceLock::new();
+
+/// Toggle "Iniciar con Windows" (compartido por WM_COMMAND y TPM_RETURNCMD).
+/// Escribe el registro y refleja el estado en config.toml.
+/// Toggle pausa de atajos (compartido por WM_COMMAND y TPM_RETURNCMD).
+/// Alterna el flag compartido y avisa al UI (toast persistente).
+fn toggle_pause() {
+    if let Some(data) = TRAY_DATA.get() {
+        let next = !data.suspended.load(Ordering::Relaxed);
+        data.suspended.store(next, Ordering::Relaxed);
+        let _ = data.ui_tx.send(UiCommand::SetPaused(next));
+        crate::ui::request_repaint();
+        tracing::info!(
+            "Atajos {} desde el tray.",
+            if next { "PAUSADOS" } else { "REACTIVADOS" }
+        );
+    }
+}
 
 /// Toggle "Iniciar con Windows" (compartido por WM_COMMAND y TPM_RETURNCMD).
 /// Escribe el registro y refleja el estado en config.toml.
@@ -62,9 +82,18 @@ fn toggle_autostart() {
 ///
 /// * `ui_tx` - Canal para enviar comandos al UI (mostrar ayuda).
 /// * `config_path` - Ruta al config.toml (para abrir con notepad).
-pub fn init_tray(ui_tx: Sender<UiCommand>, config_path: std::path::PathBuf) {
+/// * `suspended` - Flag compartido de pausa de atajos (P2).
+pub fn init_tray(
+    ui_tx: Sender<UiCommand>,
+    config_path: std::path::PathBuf,
+    suspended: Arc<AtomicBool>,
+) {
     // Guardar datos globales
-    let _ = TRAY_DATA.set(TrayData { ui_tx, config_path });
+    let _ = TRAY_DATA.set(TrayData {
+        ui_tx,
+        config_path,
+        suspended,
+    });
 
     std::thread::spawn(move || unsafe {
         run_tray_loop();
@@ -222,6 +251,9 @@ extern "system" fn tray_wnd_proc(
                     ID_TRAY_AUTOSTART => {
                         toggle_autostart();
                     }
+                    ID_TRAY_PAUSE => {
+                        toggle_pause();
+                    }
                     ID_TRAY_EXIT => {
                         tracing::info!("Saliendo via tray menu...");
                         PostQuitMessage(0);
@@ -272,6 +304,20 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         ID_TRAY_AUTOSTART as usize,
         windows::core::w!("Iniciar con Windows"),
     );
+    let paused = TRAY_DATA
+        .get()
+        .is_some_and(|d| d.suspended.load(Ordering::Relaxed));
+    let pause_flags = if paused {
+        windows::Win32::UI::WindowsAndMessaging::MENU_ITEM_FLAGS(MF_STRING.0 | MF_CHECKED.0)
+    } else {
+        MF_STRING
+    };
+    let _ = AppendMenuW(
+        hmenu,
+        pause_flags,
+        ID_TRAY_PAUSE as usize,
+        windows::core::w!("Pausar atajos"),
+    );
     let _ = AppendMenuW(hmenu, MF_STRING, 0, windows::core::w!(""));
     let _ = AppendMenuW(
         hmenu,
@@ -311,6 +357,9 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         }
         ID_TRAY_AUTOSTART => {
             toggle_autostart();
+        }
+        ID_TRAY_PAUSE => {
+            toggle_pause();
         }
         ID_TRAY_EXIT => {
             tracing::info!("Saliendo via tray menu...");

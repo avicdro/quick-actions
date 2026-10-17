@@ -30,6 +30,19 @@ pub fn init_sender(sender: Sender<HotkeyCommand>) {
     }
 }
 
+/// Registra el flag compartido de pausa (ver [`crate::ui::UiCommand::SetPaused`]).
+///
+/// Debe llamarse **antes** de [`start_listener`].
+pub fn init_suspended(flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+    #[cfg(windows)]
+    win_hook::init_suspended(flag);
+
+    #[cfg(not(windows))]
+    {
+        let _ = flag;
+    }
+}
+
 /// Inicia el listener de atajos globales en un thread dedicado.
 ///
 /// # Platform
