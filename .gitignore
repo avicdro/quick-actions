@@ -1,6 +1,13 @@
+# Build
 /target/
 *.exe
-*.log*
+
+# Runtime artifacts (se escriben junto al .exe)
 logs/
-Cargo.lock
-C:\
+*.log
+history.json
+
+# Editor junk
+.idea/
+.vscode/
+*.swp
