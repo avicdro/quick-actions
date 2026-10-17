@@ -28,11 +28,9 @@ impl KeySimulator {
         {
             use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
             const VK_MENU: i32 = 0x12; // Alt
-            // Esperar hasta 2 segundos a que Alt se libere
+                                       // Esperar hasta 2 segundos a que Alt se libere
             for _ in 0..40 {
-                let alt_down = unsafe {
-                    (GetAsyncKeyState(VK_MENU) as u16) & 0x8000 != 0
-                };
+                let alt_down = unsafe { (GetAsyncKeyState(VK_MENU) as u16) & 0x8000 != 0 };
                 if !alt_down {
                     break;
                 }

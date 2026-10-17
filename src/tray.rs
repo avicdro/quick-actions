@@ -8,15 +8,16 @@ use std::sync::OnceLock;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::HBRUSH;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::Shell::{Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW};
+use windows::Win32::UI::Shell::{
+    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW,
-    GetCursorPos, GetMessageW, LoadIconW, PostQuitMessage, RegisterClassExW,
-    SetForegroundWindow, TrackPopupMenu, TranslateMessage, AppendMenuW, ShowWindow,
-    MSG, TRACK_POPUP_MENU_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE,
-    WNDCLASSEXW, WM_COMMAND, WM_DESTROY, WM_LBUTTONUP, WM_QUIT, WM_RBUTTONUP,
-    WM_USER, IDC_ARROW, IDI_APPLICATION, MF_STRING, TPM_LEFTALIGN, TPM_NONOTIFY,
-    TPM_RETURNCMD, TPM_RIGHTBUTTON, SW_HIDE,
+    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW,
+    GetCursorPos, GetMessageW, LoadIconW, PostQuitMessage, RegisterClassExW, SetForegroundWindow,
+    ShowWindow, TrackPopupMenu, TranslateMessage, IDC_ARROW, IDI_APPLICATION, MF_STRING, MSG,
+    SW_HIDE, TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TRACK_POPUP_MENU_FLAGS,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WM_COMMAND, WM_DESTROY, WM_LBUTTONUP, WM_QUIT, WM_RBUTTONUP,
+    WM_USER, WNDCLASSEXW,
 };
 
 use crate::ui::UiCommand;
@@ -44,10 +45,8 @@ pub fn init_tray(ui_tx: Sender<UiCommand>, config_path: std::path::PathBuf) {
     // Guardar datos globales
     let _ = TRAY_DATA.set(TrayData { ui_tx, config_path });
 
-    std::thread::spawn(move || {
-        unsafe {
-            run_tray_loop();
-        }
+    std::thread::spawn(move || unsafe {
+        run_tray_loop();
     });
 }
 
@@ -62,8 +61,8 @@ unsafe fn run_tray_loop() {
     // SAFETY: GetModuleHandleW(None) devuelve el handle del modulo actual.
     // Es seguro de llamar. Si falla, usamos un HMODULE nulo (aceptable para
     // registrar la clase de ventana).
-    let hinstance = GetModuleHandleW(None)
-        .unwrap_or(windows::Win32::Foundation::HMODULE(std::ptr::null_mut()));
+    let hinstance =
+        GetModuleHandleW(None).unwrap_or(windows::Win32::Foundation::HMODULE(std::ptr::null_mut()));
 
     let class_name = windows::core::w!("QuickActionsTrayWnd");
     let wnd_class = WNDCLASSEXW {
@@ -71,8 +70,9 @@ unsafe fn run_tray_loop() {
         hInstance: windows::Win32::Foundation::HINSTANCE(hinstance.0),
         lpszClassName: class_name,
         lpfnWndProc: Some(tray_wnd_proc),
-        hCursor: windows::Win32::UI::WindowsAndMessaging::LoadCursorW(None, IDC_ARROW)
-            .unwrap_or(windows::Win32::UI::WindowsAndMessaging::HCURSOR(std::ptr::null_mut())),
+        hCursor: windows::Win32::UI::WindowsAndMessaging::LoadCursorW(None, IDC_ARROW).unwrap_or(
+            windows::Win32::UI::WindowsAndMessaging::HCURSOR(std::ptr::null_mut()),
+        ),
         hbrBackground: HBRUSH(std::ptr::null_mut()),
         ..std::mem::zeroed()
     };
@@ -88,7 +88,10 @@ unsafe fn run_tray_loop() {
         class_name,
         windows::core::w!("QuickActionsTray"),
         WINDOW_STYLE(0),
-        0, 0, 0, 0,
+        0,
+        0,
+        0,
+        0,
         None,
         None,
         hinstance,
@@ -160,30 +163,32 @@ extern "system" fn tray_wnd_proc(
 ) -> LRESULT {
     unsafe {
         match msg {
-            WM_TRAYICON => {
-                match l_param.0 as u32 {
-                    WM_LBUTTONUP => {
-                        if let Some(data) = TRAY_DATA.get() {
-                            let _ = data.ui_tx.send(UiCommand::ShowHelp(crate::actions::help_text()));
-                        }
-                        LRESULT(0)
+            WM_TRAYICON => match l_param.0 as u32 {
+                WM_LBUTTONUP => {
+                    if let Some(data) = TRAY_DATA.get() {
+                        let _ = data
+                            .ui_tx
+                            .send(UiCommand::ShowHelp(crate::actions::help_text()));
                     }
-
-                    WM_RBUTTONUP => {
-                        show_tray_menu(hwnd);
-                        LRESULT(0)
-                    }
-
-                    _ => DefWindowProcW(hwnd, msg, w_param, l_param),
+                    LRESULT(0)
                 }
-            }
+
+                WM_RBUTTONUP => {
+                    show_tray_menu(hwnd);
+                    LRESULT(0)
+                }
+
+                _ => DefWindowProcW(hwnd, msg, w_param, l_param),
+            },
 
             WM_COMMAND => {
                 let id = w_param.0 as u32;
                 match id {
                     ID_TRAY_SHOW_HELP => {
                         if let Some(data) = TRAY_DATA.get() {
-                            let _ = data.ui_tx.send(UiCommand::ShowHelp(crate::actions::help_text()));
+                            let _ = data
+                                .ui_tx
+                                .send(UiCommand::ShowHelp(crate::actions::help_text()));
                         }
                     }
                     ID_TRAY_CONFIG => {
@@ -219,10 +224,25 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         Err(_) => return,
     };
 
-    let _ = AppendMenuW(hmenu, MF_STRING, ID_TRAY_SHOW_HELP as usize, windows::core::w!("Ayuda"));
-    let _ = AppendMenuW(hmenu, MF_STRING, ID_TRAY_CONFIG as usize, windows::core::w!("Configuracion"));
+    let _ = AppendMenuW(
+        hmenu,
+        MF_STRING,
+        ID_TRAY_SHOW_HELP as usize,
+        windows::core::w!("Ayuda"),
+    );
+    let _ = AppendMenuW(
+        hmenu,
+        MF_STRING,
+        ID_TRAY_CONFIG as usize,
+        windows::core::w!("Configuracion"),
+    );
     let _ = AppendMenuW(hmenu, MF_STRING, 0, windows::core::w!(""));
-    let _ = AppendMenuW(hmenu, MF_STRING, ID_TRAY_EXIT as usize, windows::core::w!("Salir"));
+    let _ = AppendMenuW(
+        hmenu,
+        MF_STRING,
+        ID_TRAY_EXIT as usize,
+        windows::core::w!("Salir"),
+    );
 
     let mut pt = std::mem::zeroed();
     let _ = GetCursorPos(&mut pt);
@@ -241,7 +261,9 @@ unsafe fn show_tray_menu(hwnd: HWND) {
     match menu_id {
         ID_TRAY_SHOW_HELP => {
             if let Some(data) = TRAY_DATA.get() {
-                let _ = data.ui_tx.send(UiCommand::ShowHelp(crate::actions::help_text()));
+                let _ = data
+                    .ui_tx
+                    .send(UiCommand::ShowHelp(crate::actions::help_text()));
             }
         }
         ID_TRAY_CONFIG => {

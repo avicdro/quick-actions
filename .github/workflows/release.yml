@@ -1,0 +1,45 @@
+# Release — publicar el .exe en GitHub Releases.
+# Disparo: git tag vX.Y.Z && git push --tags
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build + publicar release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar toolchain mingw-w64
+        run: sudo apt-get update && sudo apt-get install -y mingw-w64
+
+      - name: Instalar Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: Cache de cargas build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release (cross)
+        run: cargo build --release --target x86_64-pc-windows-gnu --locked
+
+      - name: Empaquetar
+        run: |
+          mkdir -p dist
+          cp target/x86_64-pc-windows-gnu/release/quick-actions.exe dist/
+          cp config.toml dist/
+
+      - name: Publicar GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/quick-actions.exe
+            dist/config.toml
+          generate_release_notes: true

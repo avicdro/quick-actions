@@ -239,7 +239,8 @@ impl QuickActionsApp {
             let ui_tx = self.ui_tx.clone();
 
             std::thread::spawn(move || {
-                if let Err(e) = actions::handle_command(cmd, &config, &clipboard, &history, &ui_tx) {
+                if let Err(e) = actions::handle_command(cmd, &config, &clipboard, &history, &ui_tx)
+                {
                     tracing::error!("Error en handler: {e}");
                 }
             });
@@ -283,10 +284,7 @@ impl QuickActionsApp {
                 }
             }
             if self.result_copied {
-                ui.label(
-                    egui::RichText::new("Copiado!")
-                        .color(egui::Color32::GREEN),
-                );
+                ui.label(egui::RichText::new("Copiado!").color(egui::Color32::GREEN));
             }
         });
     }
@@ -408,7 +406,9 @@ impl eframe::App for QuickActionsApp {
             } else {
                 // Ocultar: 1x1 fuera de pantalla
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1.0, 1.0)));
-                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(-10000.0, -10000.0)));
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
+                    -10000.0, -10000.0,
+                )));
             }
             self.was_visible = self.window_open;
         }
@@ -418,7 +418,11 @@ impl eframe::App for QuickActionsApp {
             egui::CentralPanel::default().show(ctx, |ui| {
                 // Barra de pestanas (sin boton X custom, la ventana nativa ya tiene cerrar)
                 ui.horizontal(|ui| {
-                    let tabs = [(Tab::Result, "Resultado"), (Tab::History, "Historial"), (Tab::Help, "Ayuda")];
+                    let tabs = [
+                        (Tab::Result, "Resultado"),
+                        (Tab::History, "Historial"),
+                        (Tab::Help, "Ayuda"),
+                    ];
                     for (tab, label) in tabs {
                         if ui
                             .selectable_label(self.current_tab == tab, label)
@@ -501,7 +505,10 @@ impl eframe::App for QuickActionsApp {
                                 .fill(bg)
                                 .stroke(egui::Stroke::new(1.5, border_color))
                                 .inner_margin(egui::Margin {
-                                    left: 16.0, right: 16.0, top: 10.0, bottom: 10.0,
+                                    left: 16.0,
+                                    right: 16.0,
+                                    top: 10.0,
+                                    bottom: 10.0,
                                 }),
                         )
                         .show(ctx, |ui| {
@@ -510,8 +517,10 @@ impl eframe::App for QuickActionsApp {
 
                                 if !is_error {
                                     // Spinner con tamaño personalizado
-                                    let (rect, _) =
-                                        ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(20.0, 20.0),
+                                        egui::Sense::hover(),
+                                    );
                                     let painter = ui.painter();
                                     let time = ui.input(|i| i.time as f32);
                                     let angle = time * std::f32::consts::TAU;
@@ -521,13 +530,14 @@ impl eframe::App for QuickActionsApp {
                                     painter.circle_stroke(
                                         center,
                                         radius,
-                                        egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 140, 220)),
+                                        egui::Stroke::new(
+                                            2.0,
+                                            egui::Color32::from_rgb(100, 140, 220),
+                                        ),
                                     );
                                     // Punto girando
-                                    let dot_pos = center + egui::vec2(
-                                        radius * angle.cos(),
-                                        radius * angle.sin(),
-                                    );
+                                    let dot_pos = center
+                                        + egui::vec2(radius * angle.cos(), radius * angle.sin());
                                     painter.circle_filled(
                                         dot_pos,
                                         3.0,
@@ -535,8 +545,10 @@ impl eframe::App for QuickActionsApp {
                                     );
                                 } else {
                                     // Icono de error: circulo con !
-                                    let (rect, _) =
-                                        ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(20.0, 20.0),
+                                        egui::Sense::hover(),
+                                    );
                                     let painter = ui.painter();
                                     let center = rect.center();
                                     painter.circle(

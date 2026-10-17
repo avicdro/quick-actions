@@ -1,0 +1,58 @@
+# CI — valida en cada push/PR a main.
+# Cruza Linux->Windows igual que localmente (WSL2): mismo mingw + .cargo/config.toml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test-linux:
+    name: Test (host Linux, modulos cross-platform)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Rust stable + clippy/rustfmt
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache de builds (cargo)
+        uses: Swatinem/rust-cache@v2
+
+      - name: Formato
+        run: cargo fmt --all --check
+
+      - name: Clippy (warnings = error)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Tests (lib cross-platform)
+        run: cargo test --lib
+
+  build-windows:
+    name: Build release (cross x86_64-pc-windows-gnu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar toolchain mingw-w64
+        run: sudo apt-get update && sudo apt-get install -y mingw-w64
+
+      - name: Instalar Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: Cache de builds (cargo)
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release (cross)
+        run: cargo build --release --target x86_64-pc-windows-gnu --locked
+
+      - name: Subir artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: quick-actions
+          path: target/x86_64-pc-windows-gnu/release/quick-actions.exe

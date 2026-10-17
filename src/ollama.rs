@@ -47,10 +47,7 @@ impl OllamaClient {
     ///
     /// El texto generado por el modelo, o un error si falla la conexion
     /// o la respuesta.
-    pub async fn generate(&self,
-        system_prompt: &str,
-        user_text: &str,
-    ) -> Result<String> {
+    pub async fn generate(&self, system_prompt: &str, user_text: &str) -> Result<String> {
         let body = OllamaRequest {
             model: self.config.model.clone(),
             system: system_prompt.to_string(),
@@ -76,12 +73,14 @@ impl OllamaClient {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(AppError::Ollama(
-                format!("Ollama devolvio HTTP {status}: {text}")
-            ));
+            return Err(AppError::Ollama(format!(
+                "Ollama devolvio HTTP {status}: {text}"
+            )));
         }
 
-        let ollama_resp: OllamaResponse = response.json().await
+        let ollama_resp: OllamaResponse = response
+            .json()
+            .await
             .map_err(|e| AppError::Ollama(format!("Error parseando respuesta JSON: {e}")))?;
 
         Ok(ollama_resp.response)

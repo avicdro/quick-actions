@@ -1,6 +1,6 @@
 //! Handlers de comandos de hotkey (corregir, traducir, etc.).
 
-use std::sync::{Mutex, Arc};
+use std::sync::{Arc, Mutex};
 
 use crate::clipboard::ClipboardManager;
 use crate::config::Config;
@@ -10,8 +10,8 @@ use crate::hotkeys::HotkeyCommand;
 use crate::key_sim::KeySimulator;
 use crate::ollama::OllamaClient;
 use crate::prompts;
-use crate::ui::{self, HistoryData, HistoryEntryView, ResultData, UiCommand};
 use crate::text_utils;
+use crate::ui::{self, HistoryData, HistoryEntryView, ResultData, UiCommand};
 
 /// Texto de ayuda mostrado con Alt+H o click en tray.
 pub fn help_text() -> String {
@@ -89,8 +89,8 @@ fn handle_correct(
     let sys_prompt = prompts::sys_prompt_corregir(&contexto);
 
     tracing::info!("Corrigiendo texto ({} chars)...", texto_limpio.len());
-    let resultado = crate::runtime::global()
-        .block_on(ollama.generate(&sys_prompt, &texto_limpio))?;
+    let resultado =
+        crate::runtime::global().block_on(ollama.generate(&sys_prompt, &texto_limpio))?;
 
     if resultado.is_empty() {
         tracing::warn!("Ollama devolvio resultado vacio.");
@@ -98,10 +98,14 @@ fn handle_correct(
         return Ok(());
     }
 
-    tracing::info!("Correccion completada ({} chars). Pegando...", resultado.len());
+    tracing::info!(
+        "Correccion completada ({} chars). Pegando...",
+        resultado.len()
+    );
 
     {
-        let mut hist = history.lock()
+        let mut hist = history
+            .lock()
             .map_err(|_| crate::error::AppError::msg("Error de lock en historial"))?;
         hist.push(texto.clone(), resultado.clone());
         let _ = hist.save();
@@ -132,8 +136,8 @@ fn handle_translate(
     let sys_prompt = prompts::sys_prompt_traducir(&idioma);
 
     tracing::info!("Traduciendo ({} chars)...", texto_limpio.len());
-    let resultado = crate::runtime::global()
-        .block_on(ollama.generate(&sys_prompt, &texto_limpio))?;
+    let resultado =
+        crate::runtime::global().block_on(ollama.generate(&sys_prompt, &texto_limpio))?;
 
     if resultado.is_empty() {
         let _ = ui_tx.send(UiCommand::SetStatus(String::new()));
@@ -174,8 +178,8 @@ fn handle_summarize(
     let sys_prompt = prompts::sys_prompt_resumir(&formato);
 
     tracing::info!("Resumiendo ({} chars)...", texto_limpio.len());
-    let resultado = crate::runtime::global()
-        .block_on(ollama.generate(&sys_prompt, &texto_limpio))?;
+    let resultado =
+        crate::runtime::global().block_on(ollama.generate(&sys_prompt, &texto_limpio))?;
 
     if resultado.is_empty() {
         let _ = ui_tx.send(UiCommand::SetStatus(String::new()));
@@ -211,8 +215,7 @@ fn handle_generate(
     let sys_prompt = prompts::sys_prompt_generar(&contexto);
 
     tracing::info!("Generando respuesta ({} chars)...", prompt.len());
-    let resultado = crate::runtime::global()
-        .block_on(ollama.generate(&sys_prompt, &prompt))?;
+    let resultado = crate::runtime::global().block_on(ollama.generate(&sys_prompt, &prompt))?;
 
     if resultado.is_empty() {
         let _ = ui_tx.send(UiCommand::SetStatus(String::new()));
@@ -234,22 +237,28 @@ fn handle_show_history(
     history: &Arc<Mutex<History>>,
     ui_tx: &std::sync::mpsc::Sender<UiCommand>,
 ) -> Result<()> {
-    let hist = history.lock()
+    let hist = history
+        .lock()
         .map_err(|_| crate::error::AppError::msg("Error de lock en historial"))?;
 
-    let entries: Vec<HistoryEntryView> = hist.entries().iter().enumerate().map(|(i, e)| {
-        let preview = if e.original.len() > 60 {
-            format!("{}...", &e.original[..60])
-        } else {
-            e.original.clone()
-        };
-        HistoryEntryView {
-            index: i + 1,
-            preview,
-            fecha: e.fecha.clone(),
-            original: e.original.clone(),
-        }
-    }).collect();
+    let entries: Vec<HistoryEntryView> = hist
+        .entries()
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let preview = if e.original.len() > 60 {
+                format!("{}...", &e.original[..60])
+            } else {
+                e.original.clone()
+            };
+            HistoryEntryView {
+                index: i + 1,
+                preview,
+                fecha: e.fecha.clone(),
+                original: e.original.clone(),
+            }
+        })
+        .collect();
 
     let _ = ui_tx.send(UiCommand::ShowHistory(HistoryData {
         entries,

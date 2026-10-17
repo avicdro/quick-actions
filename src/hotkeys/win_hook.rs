@@ -36,20 +36,14 @@ pub fn run_hook_loop() {
     // - El callback `keyboard_proc` cumple el contrato de HOOKPROC.
     // Requiere que el thread tenga un message pump (GetMessageW) para
     // que Windows entregue los eventos al callback.
-    let hook: HHOOK = match unsafe {
-        SetWindowsHookExW(
-            WH_KEYBOARD_LL,
-            Some(keyboard_proc),
-            None,
-            0,
-        )
-    } {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::error!("No se pudo instalar el hook de teclado: {e}");
-            return;
-        }
-    };
+    let hook: HHOOK =
+        match unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), None, 0) } {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::error!("No se pudo instalar el hook de teclado: {e}");
+                return;
+            }
+        };
 
     tracing::info!("Hook de teclado instalado. Alt = modificador. Atajos: Alt+G/T/R/Enter/V/H");
 
@@ -73,11 +67,7 @@ pub fn run_hook_loop() {
 ///
 /// Usa Alt como modificador (no requiere supresion, GetAsyncKeyState lo detecta
 /// confiablemente, y no secuestra el teclado).
-extern "system" fn keyboard_proc(
-    n_code: i32,
-    w_param: WPARAM,
-    l_param: LPARAM,
-) -> LRESULT {
+extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
     if n_code < 0 {
         // SAFETY: n_code < 0 significa que el hook no debe procesar el evento.
         // Pasamos directamente al siguiente hook de la cadena.
@@ -101,9 +91,7 @@ extern "system" fn keyboard_proc(
 
     // SAFETY: GetAsyncKeyState lee el estado fisico de la tecla desde el
     // driver de teclado. Es seguro de llamar desde cualquier thread.
-    let alt_held = unsafe {
-        (GetAsyncKeyState(VK_MENU as i32) as u16) & 0x8000 != 0
-    };
+    let alt_held = unsafe { (GetAsyncKeyState(VK_MENU as i32) as u16) & 0x8000 != 0 };
 
     if !alt_held {
         // Alt no presionado: pasar la tecla al sistema normalmente
@@ -113,12 +101,12 @@ extern "system" fn keyboard_proc(
 
     // Alt esta presionado: verificar si es una tecla mapeada
     let command = match vk_code {
-        0x47 => Some(HotkeyCommand::Correct),   // G
-        0x54 => Some(HotkeyCommand::Translate),  // T
-        0x52 => Some(HotkeyCommand::Summarize), // R
-        0x0D => Some(HotkeyCommand::Generate),   // Enter
+        0x47 => Some(HotkeyCommand::Correct),     // G
+        0x54 => Some(HotkeyCommand::Translate),   // T
+        0x52 => Some(HotkeyCommand::Summarize),   // R
+        0x0D => Some(HotkeyCommand::Generate),    // Enter
         0x56 => Some(HotkeyCommand::ShowHistory), // V
-        0x48 => Some(HotkeyCommand::ShowHelp),   // H
+        0x48 => Some(HotkeyCommand::ShowHelp),    // H
         _ => None,
     };
 

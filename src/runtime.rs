@@ -15,7 +15,7 @@ pub fn global() -> &'static Runtime {
     RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
-        .build()
+            .build()
             .unwrap_or_else(|e| {
                 panic!("No se pudo crear el runtime de tokio: {e}");
             })

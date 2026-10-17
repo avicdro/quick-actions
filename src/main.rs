@@ -1,27 +1,51 @@
 //! quick-actions — Suite de atajos globales para IA y productividad.
 //!
 //! Reemplaza scripts de AutoHotkey con un unico ejecutable Rust.
+//! El bin solo es compilable para Windows (`--target x86_64-pc-windows-gnu`);
+//! los modulos cross-platform de la lib (config, history, ...) si corren sus
+//! tests en Linux.
 
 // En Windows: no mostrar consola. Es una app de fondo con tray icon.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-use std::sync::mpsc::channel;
-use std::sync::{Arc, Mutex};
-
-use quick_actions::clipboard::ClipboardManager;
-use quick_actions::config::Config;
-use quick_actions::history::History;
-use quick_actions::hotkeys::{init_sender, start_listener, HotkeyCommand};
-use quick_actions::tray::init_tray;
-use quick_actions::ui::{QuickActionsApp, UiChannels};
-
+#[cfg(windows)]
 fn main() {
-    // === 1. Logging a archivo (para debug si crashea) ===
+    windows_main();
+}
+
+#[cfg(not(windows))]
+fn main() {
+    eprintln!(
+        "quick-actions es una app para Windows, mas alla de la lib que compila aca. \
+         Build: cargo build --release --target x86_64-pc-windows-gnu"
+    );
+}
+
+#[cfg(windows)]
+fn windows_main() {
+    use std::sync::mpsc::channel;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+
+    use quick_actions::clipboard::ClipboardManager;
+    use quick_actions::config::Config;
+    use quick_actions::history::History;
+    use quick_actions::hotkeys::{init_sender, start_listener, HotkeyCommand};
+    use quick_actions::tray::init_tray;
+    use quick_actions::ui::{QuickActionsApp, UiChannels};
+
+    // === 0. Panic hook — registrar crashes de cualquier thread ===
+    //
+    // El release no usa `panic = "abort"` a proposito: un panic en un thread
+    // (tray, hotkey, worker) no mata el proceso, pero antes nadie lo veia.
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(std::path::PathBuf::from))
         .unwrap_or_else(|| std::path::PathBuf::from("."));
 
+    install_panic_hook(&exe_dir);
+
+    // === 1. Logging a archivo (para debug si crashea) ===
     let log_dir = exe_dir.join("logs");
     std::fs::create_dir_all(&log_dir).unwrap_or_default();
 
@@ -44,7 +68,8 @@ fn main() {
             Arc::new(c)
         }
         Err(e) => {
-            let msg = format!("Error cargando configuracion:\n\n{e}\n\nCrea config.toml junto al exe.");
+            let msg =
+                format!("Error cargando configuracion:\n\n{e}\n\nCrea config.toml junto al exe.");
             tracing::error!("{msg}");
             show_error_dialog(&msg);
             std::process::exit(1);
@@ -114,20 +139,48 @@ fn main() {
         ..Default::default()
     };
 
-    let _ = eframe::run_native(
-        "QuickActions",
-        options,
-        Box::new(|_cc| {
-            Ok(Box::new(app))
-        }),
-    );
+    let _ = eframe::run_native("QuickActions", options, Box::new(|_cc| Ok(Box::new(app))));
+}
+
+/// Registra panics de cualquier thread en `logs/panic.log`.
+///
+/// El hook es global y persiste hasta el cierre. Escribe directo al archivo
+/// (no via tracing) para que funcione incluso si el logging fallo antes.
+#[cfg(windows)]
+fn install_panic_hook(exe_dir: &std::path::Path) {
+    let panic_log_dir = exe_dir.join("logs");
+    let _ = std::fs::create_dir_all(&panic_log_dir);
+    let panic_log = panic_log_dir.join("panic.log");
+
+    std::panic::set_hook(Box::new(move |info| {
+        let thread = std::thread::current();
+        let thread_name = thread.name().unwrap_or("<unnamed>");
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        let line = format!(
+            "[{}] PANIC en thread '{thread_name}': {info}\nbacktrace:\n{backtrace}\n",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+        );
+
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&panic_log)
+        {
+            use std::io::Write as _;
+            let _ = writeln!(file, "{line}");
+        }
+
+        // Ademas el pipeline normal (logs/quick-actions.log)
+        tracing::error!("PANIC en thread '{thread_name}': {info}");
+        eprintln!("{line}");
+    }));
 }
 
 /// Muestra un dialogo de error nativo de Windows (MessageBoxW).
 #[cfg(windows)]
 fn show_error_dialog(msg: &str) {
-    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
     use windows::core::HSTRING;
+    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
 
     unsafe {
         let _ = MessageBoxW(
@@ -137,9 +190,4 @@ fn show_error_dialog(msg: &str) {
             MB_OK | MB_ICONERROR,
         );
     }
-}
-
-#[cfg(not(windows))]
-fn show_error_dialog(msg: &str) {
-    eprintln!("ERROR: {msg}");
 }

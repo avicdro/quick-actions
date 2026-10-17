@@ -31,7 +31,9 @@ impl ClipboardManager {
     /// Guarda el contenido actual del portapapeles como backup.
     pub fn backup(&self) -> Result<()> {
         let text = self.get_text()?;
-        let mut backup = self.backup.lock()
+        let mut backup = self
+            .backup
+            .lock()
             .map_err(|_| AppError::Clipboard("Error de lock en backup".to_string()))?;
         *backup = Some(text);
         Ok(())
@@ -39,7 +41,9 @@ impl ClipboardManager {
 
     /// Restaura el portapapeles desde el backup.
     pub fn restore(&self) -> Result<()> {
-        let backup = self.backup.lock()
+        let backup = self
+            .backup
+            .lock()
             .map_err(|_| AppError::Clipboard("Error de lock en restore".to_string()))?;
         if let Some(ref text) = *backup {
             self.set_text(text)?;
@@ -52,7 +56,9 @@ impl ClipboardManager {
     /// Si el portapapeles esta vacio o no tiene texto, devuelve `Ok("")`
     /// en lugar de error. Solo devuelve error para fallos reales.
     pub fn get_text(&self) -> Result<String> {
-        let mut clipboard = self.clipboard.lock()
+        let mut clipboard = self
+            .clipboard
+            .lock()
             .map_err(|_| AppError::Clipboard("Error de lock en get_text".to_string()))?;
 
         match clipboard.get_text() {
@@ -66,7 +72,9 @@ impl ClipboardManager {
                 {
                     Ok(String::new())
                 } else {
-                    Err(AppError::Clipboard(format!("Error leyendo portapapeles: {e}")))
+                    Err(AppError::Clipboard(format!(
+                        "Error leyendo portapapeles: {e}"
+                    )))
                 }
             }
         }
@@ -74,9 +82,12 @@ impl ClipboardManager {
 
     /// Establece el texto del portapapeles.
     pub fn set_text(&self, text: &str) -> Result<()> {
-        let mut clipboard = self.clipboard.lock()
+        let mut clipboard = self
+            .clipboard
+            .lock()
             .map_err(|_| AppError::Clipboard("Error de lock en set_text".to_string()))?;
-        clipboard.set_text(text)
+        clipboard
+            .set_text(text)
             .map_err(|e| AppError::Clipboard(format!("Error escribiendo portapapeles: {e}")))
     }
 

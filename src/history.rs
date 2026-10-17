@@ -34,7 +34,11 @@ impl History {
             Vec::new()
         };
 
-        Ok(Self { entries, max_entries, path })
+        Ok(Self {
+            entries,
+            max_entries,
+            path,
+        })
     }
 
     /// Anade una nueva entrada al historial (al inicio).
@@ -42,7 +46,14 @@ impl History {
         let now = chrono::Local::now();
         let fecha = now.format("%d/%m %H:%M:%S").to_string();
 
-        self.entries.insert(0, HistoryEntry { original, corregido, fecha });
+        self.entries.insert(
+            0,
+            HistoryEntry {
+                original,
+                corregido,
+                fecha,
+            },
+        );
 
         // Truncar si excede el maximo
         while self.entries.len() > self.max_entries {
@@ -66,8 +77,7 @@ impl History {
     /// Guarda el historial a disco de forma atomica.
     ///
     /// Escribe a un archivo temporal y luego hace rename.
-    pub fn save(&self) -> Result<()>
- {
+    pub fn save(&self) -> Result<()> {
         if self.entries.is_empty() {
             return Ok(());
         }
