@@ -51,7 +51,13 @@
   - Hot-reload: `config: Arc<RwLock<Config>>` para App y tray; `handle_command` lee snapshot al inicio de cada acción
   - Nota documentada: el comentario en-línea de la línea reemplazada se pierde, el resto del archivo se preserva
   - 26 tests + clippy + cross-check Windows OK
-- [ ] **P4 — Autoupdate check** — al iniciar, GET `https://api.github.com/repos/{owner}/{repo}/releases/latest`, si tag > `CARGO_PKG_VERSION` → toast + click abre release (sin installar, solo avisar)
+- [x] **P4 — Check de updates** (COMPLETADO 2026-10-18) —
+  - `update_check.rs` (nuevo, cross-platform): `GET https://api.github.com/repos/{repo}/releases/latest` en thread de fondo al arrancar (timeout 5s, User-Agent requerido por la API); falla silenciosa (offline/rate-limit no molestan)
+  - Comparación semver inline (`parse_version` + `is_newer_tag`): `v`-prefix, sufijos `-rc1`/`+build` ignorados, tags raras → no aviso. 6 tests
+  - Config: `[app] check_updates = true` (opt-out) + `repository = "avicdro/quick-actions"`
+  - UI: `UiCommand::ShowUpdate{version,url,body}` → reutiliza pestaña Resultado como visor: título azul "Nueva version disponible: vX", notas (`"Notas de la version:"`), botón *"Descargar desde GitHub ↗"* (`cmd /C start "" url` con `CREATE_NO_WINDOW`), aclaración "(no instala nada automaticamente)". Un `ShowResult` normal cancela el aviso (`update_url = None`)
+  - BONUS: protocolo UI extraído a `ui_protocol.rs` **cross-platform** (`UiCommand`, `ResultData`, `HistoryData`, `HistoryEntryView`, `UiChannels`) — `ui.rs` (windows-only) lo re-exporta; `update_check` puede importar sin egui. Prepara la fase 1 de refactor
+  - 29 tests + clippy + cross-check OK
 - [ ] **P5 — Instalador/desinstalador** — script PowerShell `install.ps1`: copia a `%LOCALAPPDATA%\QuickActions`, config → `%APPDATA%\quick-actions\`, symlink en autostart; `uninstall.ps1` inverso
 - [ ] **P6 — Íconos tray/UI reales** — `.ico` embebido (`include_bytes!`) para tray y viewport
 - [ ] **P7 — CapsLock como toggle configurable** — `[hotkeys] capsmode = "hold" | "toggle"` (default `hold`, comportamiento actual); en toggle, CapsLock trabaja como rapñador y suelto dispara
@@ -87,3 +93,4 @@ Ver detalle completo en `IMPROVEMENTS.md` (fases 1–5). Resumen del orden acord
 | 2026-10-17 | P1 completado | `feat: P1 auto-arranque...` (24d77a0) | 23 tests + cross-check OK |
 | 2026-10-17 | P2 completado | `feat: P2 pausa de hotkeys...` (54fbede) | passthrough total + toast Pausado |
 | 2026-10-17 | P3 completado | `feat: P3 modelo on-the-fly...` | submenu tray + hot-reload (26 tests) |
+| 2026-10-18 | P4 completado | `feat: P4 check updates...` | GitHub API + ui_protocol extracción (29 tests) |

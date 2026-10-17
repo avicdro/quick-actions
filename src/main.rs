@@ -155,6 +155,11 @@ fn windows_main() {
     );
     tracing::info!("Tray icon iniciado.");
 
+    // === 5.5. Check de updates (background, no bloquea) — P4 ===
+    if let Some(app_config) = config.read().ok().map(|c| c.app.clone()) {
+        quick_actions::update_check::spawn_check(&app_config, ui_channels.tx.clone());
+    }
+
     // === 6. Iniciar hook de teclado (thread dedicado) ===
     init_sender(hotkey_tx);
     quick_actions::hotkeys::init_suspended(Arc::clone(&suspended));

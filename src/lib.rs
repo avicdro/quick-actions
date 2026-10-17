@@ -8,6 +8,8 @@ pub mod ollama;
 pub mod prompts;
 pub mod runtime;
 pub mod text_utils;
+pub mod ui_protocol;
+pub mod update_check;
 
 // Modulos que dependen de crates solo disponibles en Windows.
 // En Linux (para tests), no se compilan.

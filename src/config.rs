@@ -85,13 +85,28 @@ impl Default for HotkeysConfig {
 }
 
 /// Configuracion general de la app.
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct AppConfig {
     /// Iniciar automaticamente con Windows (entrada en
     /// `HKCU\...\CurrentVersion\Run`). No interfiere con toggles manuales
     /// desde el tray (ver docs/plans/improvements-v0.3.md, P1).
     pub autostart: bool,
+    /// Verificar updates al arrancar (GET /releases/latest de GitHub).
+    pub check_updates: bool,
+    /// Repo a consultar para updates (`dueño/repo`). Vacio = sin check.
+    pub repository: String,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            autostart: false,
+            // Opt-out: por defecto SI chequea updates.
+            check_updates: true,
+            repository: "avicdro/quick-actions".to_string(),
+        }
+    }
 }
 
 /// Rutas a ejecutables externos.
@@ -187,6 +202,8 @@ enabled = true
 
 [app]
 autostart = false
+check_updates = true
+repository = "avicdro/quick-actions"
 
 [paths]
 chrome = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
@@ -261,6 +278,10 @@ mod tests {
         assert_eq!(c.ollama.model, "gemma4:cloud");
         assert_eq!(c.ui.font_size, 16);
         assert!(c.hotkeys.enabled);
+        // P1/P4
+        assert!(!c.app.autostart);
+        assert!(c.app.check_updates);
+        assert_eq!(c.app.repository, "avicdro/quick-actions");
     }
 
     #[test]

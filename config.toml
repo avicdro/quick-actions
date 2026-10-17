@@ -22,6 +22,10 @@ enabled = true
 # Solo define el estado inicial; cuando lo toggles desde el tray, el
 # registro manda y esta linea se actualiza automaticamente.
 autostart = false
+# Verificar updates al arrancar (GET /releases/latest de GitHub).
+check_updates = true
+# Repo a consultar (vacio = sin check).
+repository = "avicdro/quick-actions"
 
 [paths]
 chrome = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"

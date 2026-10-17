@@ -25,77 +25,9 @@ pub fn request_repaint() {
     }
 }
 
-/// Datos para mostrar una ventana de resultado.
-#[derive(Debug, Clone)]
-pub struct ResultData {
-    /// Titulo de la ventana (ej: "Traduccion", "Resumen").
-    pub titulo: String,
-    /// Texto original (entrada del usuario).
-    pub original: String,
-    /// Resultado generado por Ollama.
-    pub resultado: String,
-}
-
-/// Datos para mostrar el historial.
-#[derive(Debug, Clone)]
-pub struct HistoryData {
-    /// Entradas del historial.
-    pub entries: Vec<HistoryEntryView>,
-    /// Numero seleccionado por el usuario (1-based, 0 = ninguno).
-    pub selected: usize,
-}
-
-/// Representacion visual de una entrada de historial.
-#[derive(Debug, Clone)]
-pub struct HistoryEntryView {
-    /// Indice visible (1-based).
-    pub index: usize,
-    /// Texto de preview (truncado).
-    pub preview: String,
-    /// Fecha formateada.
-    pub fecha: String,
-    /// Texto original completo (para copiar).
-    pub original: String,
-}
-
-/// Canal de comunicacion entre la logica de negocio y el UI thread.
-pub struct UiChannels {
-    /// Enviar comandos al UI (desde hotkeys/logica).
-    pub tx: std::sync::mpsc::Sender<UiCommand>,
-    /// Recibir comandos en el UI.
-    pub rx: Receiver<UiCommand>,
-}
-
-impl UiChannels {
-    /// Crea un nuevo par de canales.
-    pub fn new() -> Self {
-        let (tx, rx) = std::sync::mpsc::channel();
-        Self { tx, rx }
-    }
-}
-
-impl Default for UiChannels {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Comandos que el UI puede recibir.
-#[derive(Debug, Clone)]
-pub enum UiCommand {
-    /// Mostrar ventana de resultado.
-    ShowResult(ResultData),
-    /// Mostrar ventana de historial.
-    ShowHistory(HistoryData),
-    /// Mostrar ventana de ayuda.
-    ShowHelp(String),
-    /// Actualizar el estado (loading/error). Cadena vacia = sin estado.
-    SetStatus(String),
-    /// Pausar/resumir los atajos (toast persistente "Pausado").
-    SetPaused(bool),
-    /// Cerrar todas las ventanas.
-    CloseAll,
-}
+// Protocolo de datos/comandos (cross-platform, movido a su propio modulo
+// para que la logica no dependa de egui — de camino a la fase 1 de refactor).
+pub use crate::ui_protocol::{HistoryData, HistoryEntryView, ResultData, UiChannels, UiCommand};
 
 /// Pestanas de la ventana unificada.
 #[derive(Debug, Clone, PartialEq)]
@@ -157,6 +89,8 @@ pub struct QuickActionsApp {
     toast_is_error: bool,
     /// Si los atajos estan pausados (toast "Pausado" persistente).
     paused: bool,
+    /// Si hay aviso de update activo: URL de descarga en pestaña Resultado.
+    update_url: Option<String>,
 }
 
 impl QuickActionsApp {
@@ -191,6 +125,7 @@ impl QuickActionsApp {
             toast_was_visible: false,
             toast_is_error: false,
             paused: false,
+            update_url: None,
         }
     }
 
@@ -206,6 +141,8 @@ impl QuickActionsApp {
                     self.result_data = Some(data);
                     self.current_tab = Tab::Result;
                     self.window_open = true;
+                    // Un resultado normal cancela cualquier aviso de update
+                    self.update_url = None;
                 }
                 UiCommand::ShowHistory(data) => {
                     self.history_data = Some(data);
@@ -239,6 +176,25 @@ impl QuickActionsApp {
                         self.toast_visible = false;
                     }
                 }
+                UiCommand::ShowUpdate { version, url, body } => {
+                    // Modo aviso: pestaña Resultado reutilizada como visor
+                    // de release notes + enlace de descarga.
+                    let body = if body.trim().is_empty() {
+                        "(sin notas de la version)".to_string()
+                    } else {
+                        // Truncar por chars (UTF-8 safe) a ~1200
+                        body.chars().take(1200).collect()
+                    };
+                    self.result_original = body;
+                    self.update_url = Some(url);
+                    self.result_data = Some(ResultData {
+                        titulo: format!("Nueva version disponible: {version}"),
+                        original: String::new(),
+                        resultado: String::new(),
+                    });
+                    self.current_tab = Tab::Result;
+                    self.window_open = true;
+                }
                 UiCommand::CloseAll => {
                     self.window_open = false;
                 }
@@ -267,13 +223,38 @@ impl QuickActionsApp {
     /// Dibuja la pestana de resultado.
     fn draw_result_tab(&mut self, ui: &mut egui::Ui) {
         if self.result_data.is_none() {
-            ui.label("No hay resultado ainda. Selecciona texto y pulsa Alt+T/R/Enter.");
+            ui.label("No hay resultado todavía. Selecciona texto y pulsa Alt+T/R/Enter.");
             return;
         }
 
         let Some(data) = self.result_data.as_ref() else {
             return;
         };
+
+        // Modo aviso de update (ShowUpdate): visor de notas + enlace.
+        if let Some(url) = self.update_url.clone() {
+            ui.label(egui::RichText::new("Notas de la version:").color(egui::Color32::GRAY));
+            ui.add_sized(
+                [ui.available_width(), 200.0],
+                egui::TextEdit::multiline(&mut self.result_original.as_str()).interactive(false),
+            );
+            ui.add(egui::Separator::default().horizontal());
+            let url_click = url.clone();
+            ui.horizontal(|ui| {
+                if ui
+                    .link(egui::RichText::new("Descargar desde GitHub ↗").strong())
+                    .clicked()
+                {
+                    open_url_in_browser(&url_click);
+                }
+            });
+            ui.label(
+                egui::RichText::new("(no instala nada automaticamente)")
+                    .small()
+                    .color(egui::Color32::GRAY),
+            );
+            return;
+        }
 
         ui.label(egui::RichText::new("Texto original:").color(egui::Color32::GRAY));
         ui.add_sized(
@@ -639,5 +620,22 @@ impl eframe::App for QuickActionsApp {
         let needs_repaint = self.window_open || self.toast_visible;
         let repaint_ms = if needs_repaint { 30 } else { 5000 };
         ctx.request_repaint_after(std::time::Duration::from_millis(repaint_ms));
+    }
+}
+
+/// Abre una URL en el navegador por defecto de Windows.
+///
+/// `cmd /C start "" {url}` con `CREATE_NO_WINDOW` para no flashear consola.
+fn open_url_in_browser(url: &str) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let result = std::process::Command::new("cmd")
+        .args(["/C", "start", "", url])
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn();
+
+    if let Err(e) = result {
+        tracing::warn!("No se pudo abrir {url}: {e}");
     }
 }
