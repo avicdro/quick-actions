@@ -58,7 +58,13 @@
   - UI: `UiCommand::ShowUpdate{version,url,body}` → reutiliza pestaña Resultado como visor: título azul "Nueva version disponible: vX", notas (`"Notas de la version:"`), botón *"Descargar desde GitHub ↗"* (`cmd /C start "" url` con `CREATE_NO_WINDOW`), aclaración "(no instala nada automaticamente)". Un `ShowResult` normal cancela el aviso (`update_url = None`)
   - BONUS: protocolo UI extraído a `ui_protocol.rs` **cross-platform** (`UiCommand`, `ResultData`, `HistoryData`, `HistoryEntryView`, `UiChannels`) — `ui.rs` (windows-only) lo re-exporta; `update_check` puede importar sin egui. Prepara la fase 1 de refactor
   - 29 tests + clippy + cross-check OK
-- [ ] **P5 — Instalador/desinstalador** — script PowerShell `install.ps1`: copia a `%LOCALAPPDATA%\QuickActions`, config → `%APPDATA%\quick-actions\`, symlink en autostart; `uninstall.ps1` inverso
+- [x] **P5 — Instalador/desinstalador** (COMPLETADO 2026-10-18) —
+  - `install.ps1`: instala sin admin en `%LOCALAPPDATA%\QuickActions` (exe + config junto al exe, que es donde la app la lee; el plan original decía `%APPDATA%` pero el código carga config del dir del exe — corregido). Detiene instancias previas, conserva config existente, arranca la app al final
+  - `-Autostart` (opt-in): reescribe `[app] autostart = true` en el config copiado con UTF-8 **sin BOM** (`WriteAllText`); si la línea no existe no toca nada (el toggle del tray es el camino). Nota: P1 ya maneja el registro HKCU desde la app → el instalador no toca el registro ni symlinks
+  - `uninstall.ps1`: detiene la app, limpia `HKCU\...\Run\QuickActions`, borra la carpeta completa; `-KeepData` respalda `config.toml` + `history.json` a `Documents\QuickActionsBackup`
+  - `release.yml`: instala los dos scripts al dist (downloading release = instalable)
+  - README: sección "🚀 Instalación" + quitado el claim falso de `%APPDATA%` en Config
+  - Scripts sin acentos (encoding-safe para PS 5.1); balance/strings verificados offline (no hay pwsh en WSL — test real pendiente en Windows)
 - [ ] **P6 — Íconos tray/UI reales** — `.ico` embebido (`include_bytes!`) para tray y viewport
 - [ ] **P7 — CapsLock como toggle configurable** — `[hotkeys] capsmode = "hold" | "toggle"` (default `hold`, comportamiento actual); en toggle, CapsLock trabaja como rapñador y suelto dispara
 
@@ -94,3 +100,4 @@ Ver detalle completo en `IMPROVEMENTS.md` (fases 1–5). Resumen del orden acord
 | 2026-10-17 | P2 completado | `feat: P2 pausa de hotkeys...` (54fbede) | passthrough total + toast Pausado |
 | 2026-10-17 | P3 completado | `feat: P3 modelo on-the-fly...` | submenu tray + hot-reload (26 tests) |
 | 2026-10-18 | P4 completado | `feat: P4 check updates...` | GitHub API + ui_protocol extracción (29 tests) |
+| 2026-10-18 | P5 completado | `feat: P5 instalador y desinstalador PS1` | scripts + release.yml dist + README |

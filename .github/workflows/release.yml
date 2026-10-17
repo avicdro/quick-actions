@@ -35,6 +35,7 @@ jobs:
           mkdir -p dist
           cp target/x86_64-pc-windows-gnu/release/quick-actions.exe dist/
           cp config.toml dist/
+          cp install.ps1 uninstall.ps1 dist/
 
       - name: Publicar GitHub Release
         uses: softprops/action-gh-release@v2
@@ -42,4 +43,6 @@ jobs:
           files: |
             dist/quick-actions.exe
             dist/config.toml
+            dist/install.ps1
+            dist/uninstall.ps1
           generate_release_notes: true

@@ -34,9 +34,24 @@ Suite de atajos globales para IA y productividad en **Windows**, escrita en **Ru
 - **Ollama** corriendo localmente (`ollama serve`, por defecto en `http://localhost:11434`)
 - Un modelo instalado en Ollama, p. ej.: `ollama pull gemma4:cloud`
 
+## 🚀 Instalación
+
+Descarga los archivos de [Releases](https://github.com/avicdro/quick-actions/releases) (`quick-actions.exe`, `config.toml`, `install.ps1`, `uninstall.ps1`) a una carpeta y corre:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+# activando auto-arranque en el mismo paso:
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Autostart
+```
+
+- Instala en `%LOCALAPPDATA%\QuickActions` (sin admin), detiene instancias previas y arranca la app al terminar
+- Si ya hay una config instalada, **se conserva** (no pisa tu configuración)
+- Auto-arranque: toggle "Iniciar con Windows" en el tray, o `-Autostart` en el instalador
+- Desinstalar: `powershell -ExecutionPolicy Bypass -File .\uninstall.ps1` (con `-KeepData` respalda `config.toml` e `history.json` en `Documents\QuickActionsBackup`)
+
 ## ⚙️ Configuración
 
-Coloca `config.toml` junto al `.exe` (o en `%APPDATA%\quick-actions\`):
+Coloca `config.toml` junto al `.exe`:
 
 ```toml
 [ollama]
@@ -52,6 +67,11 @@ history_max_entries = 50
 
 [paths]
 chrome = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+
+[app]
+autostart = false        # Auto-arranque con Windows (tambien via tray)
+check_updates = true     # Buscar releases nuevas al arrancar
+repository = "avicdro/quick-actions"
 ```
 
 ## 🛠️ Build
