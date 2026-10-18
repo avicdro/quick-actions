@@ -15,23 +15,27 @@ impl KeySimulator {
 
     /// Libera todas las teclas modificadoras que puedan estar presionadas.
     ///
-    /// Esto es CRITICO cuando se usa Alt como modificador de hotkey:
-    /// despues de que el hook consume la tecla mapeada (ej: Alt+T),
-    /// Alt sigue fisicamente presionado. Si intentamos simular Ctrl+C
-    /// sin liberar Alt antes, el sistema ve Alt+Ctrl+C que no copia
-    /// correctamente, y el texto queda vacio (causa del bug "selecciona todo").
+    /// CRITICO: despues de que el hook consume la tecla mapeada, el
+    /// modificador sigue fisicamente presionado (Alt o CapsLock, segun
+    /// config). Si simulamos Ctrl+C mientras esta presionado, el sistema
+    /// ve terciopelos corridos (Alt+Ctrl+C) que no copian correctamente,
+    /// y el texto queda vacio (causa del bug "selecciona todo").
     fn release_modifiers() -> Result<()> {
-        // Esperar a que el usuario suelte fisicamente Alt.
-        // Esto es CRITICO: si simulamos Ctrl+C mientras Alt sigue presionado,
-        // el sistema ve Alt+Ctrl+C que no copia correctamente.
+        // Esperar a que el usuario suelte fisicamente el modificador
+        // configurado. Hasta 2 segundos (40 x 50ms).
         #[cfg(windows)]
         {
             use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
-            const VK_MENU: i32 = 0x12; // Alt
-                                       // Esperar hasta 2 segundos a que Alt se libere
+
+            let watch: &[i32] = match crate::hotkeys::modifier() {
+                crate::hotkeys::Modifier::Alt => &[0x12],      // Alt
+                crate::hotkeys::Modifier::CapsLock => &[0x14], // CapsLock
+            };
             for _ in 0..40 {
-                let alt_down = unsafe { (GetAsyncKeyState(VK_MENU) as u16) & 0x8000 != 0 };
-                if !alt_down {
+                let down = watch
+                    .iter()
+                    .any(|&vk| unsafe { (GetAsyncKeyState(vk) as u16) & 0x8000 != 0 });
+                if !down {
                     break;
                 }
                 thread::sleep(Duration::from_millis(50));

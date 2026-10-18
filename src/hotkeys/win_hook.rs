@@ -5,10 +5,11 @@ use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
-    UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+    UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP,
+    WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 
-use crate::hotkeys::HotkeyCommand;
+use crate::hotkeys::{CapsMode, HotkeyCommand, Modifier};
 
 /// Canal global para enviar comandos desde el hook al thread principal.
 static SENDER: OnceLock<Sender<HotkeyCommand>> = OnceLock::new();
@@ -16,6 +17,18 @@ static SENDER: OnceLock<Sender<HotkeyCommand>> = OnceLock::new();
 /// Cuando es `true`, el hook hace passthrough total de TODO el teclado
 /// (no intercepta atajos). Toggle desde el tray ("Pausar" — P2).
 static SUSPENDED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+
+/// Latch del modo `toggle` (P7): tap de CapsLock lo enciende; la proxima
+/// tecla de atajo dispara y lo apaga; cualquier otra tecla lo apaga.
+static LATCHED: AtomicBool = AtomicBool::new(false);
+
+/// En modo toggle nos comemos el keydown de CapsLock: tambien hay que
+/// comerse su keyup para no dejar colado un up de una down que nunca
+/// llego al sistema.
+static SWALLOW_CAPS_UP: AtomicBool = AtomicBool::new(false);
+
+const VK_CAPITAL: u32 = 0x14; // CapsLock
+const VK_MENU: u32 = 0x12; // Alt key
 
 /// Inicializa el sender global. Debe llamarse antes de [`run_hook_loop`].
 pub fn init_sender(sender: Sender<HotkeyCommand>) {
@@ -33,6 +46,19 @@ fn get_sender() -> Option<&'static Sender<HotkeyCommand>> {
 
 fn is_suspended() -> bool {
     SUSPENDED.get().is_some_and(|f| f.load(Ordering::Relaxed))
+}
+
+/// Tabla de teclas mapeadas: vk -> comando.
+fn mapped_command(vk_code: u32) -> Option<HotkeyCommand> {
+    match vk_code {
+        0x47 => Some(HotkeyCommand::Correct),     // G
+        0x54 => Some(HotkeyCommand::Translate),   // T
+        0x52 => Some(HotkeyCommand::Summarize),   // R
+        0x0D => Some(HotkeyCommand::Generate),    // Enter
+        0x56 => Some(HotkeyCommand::ShowHistory), // V
+        0x48 => Some(HotkeyCommand::ShowHelp),    // H
+        _ => None,
+    }
 }
 
 /// Inicia el message pump con el hook de teclado de bajo nivel.
@@ -59,7 +85,16 @@ pub fn run_hook_loop() {
             }
         };
 
-    tracing::info!("Hook de teclado instalado. Alt = modificador. Atajos: Alt+G/T/R/Enter/V/H");
+    let (mod_name, mode_desc) = match crate::hotkeys::modifier() {
+        Modifier::CapsLock => match crate::hotkeys::caps_mode() {
+            CapsMode::Hold => ("CapsLock", "hold: mantener + tecla"),
+            CapsMode::Toggle => ("CapsLock", "toggle: tap queda latched"),
+        },
+        Modifier::Alt => ("Alt", "hold: mantener + tecla"),
+    };
+    tracing::info!(
+        "Hook de teclado instalado. Modificador: {mod_name} ({mode_desc}). Atajos: +G/T/R/Enter/V/H"
+    );
 
     // SAFETY: GetMessageW bloquea hasta que llega un mensaje.
     // El loop termina cuando GetMessageW devuelve false (WM_QUIT).
@@ -77,10 +112,15 @@ pub fn run_hook_loop() {
     tracing::info!("Hook de teclado desinstalado.");
 }
 
-/// Callback del hook de teclado de bajo nivel.
+/// Callback del hook de teclado de bajo nivel (LL hook).
 ///
-/// Usa Alt como modificador (no requiere supresion, GetAsyncKeyState lo detecta
-/// confiablemente, y no secuestra el teclado).
+/// Modificador configurable (P7):
+/// - `Alt` (config anterior): hold; GetAsyncKeyState detecta presion.
+/// - `CapsLock + hold`: CapsLock pasa al sistema sin cambios ( alterna
+///   mayusculas nativamente). Los atajos disparan mientras se mantiene.
+/// - `CapsLock + toggle`: nos comemos CapsLock (down/up); el tap queda
+///   latched y la proxima tecla de atajo dispara. Cualquier otra tecla
+///   apaga el latch pasando al sistema normalmente.
 extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
     if n_code < 0 {
         // SAFETY: n_code < 0 significa que el hook no debe procesar el evento.
@@ -89,7 +129,10 @@ extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_param: LPARAM) 
     }
 
     // Pausado (P2): passthrough total, como si el hook ni estuviera.
+    // De paso reseteamos el latch para no revivir estados viejos.
     if is_suspended() {
+        LATCHED.store(false, Ordering::Relaxed);
+        SWALLOW_CAPS_UP.store(false, Ordering::Relaxed);
         // SAFETY: Pasar el evento al siguiente hook de la cadena.
         return unsafe { CallNextHookEx(None, n_code, w_param, l_param) };
     }
@@ -99,46 +142,87 @@ extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_param: LPARAM) 
     let kb_struct = unsafe { &*(l_param.0 as *const KBDLLHOOKSTRUCT) };
     let vk_code = kb_struct.vkCode;
 
-    const VK_MENU: u32 = 0x12; // Alt key
-
     let is_keydown = w_param.0 == WM_KEYDOWN as usize || w_param.0 == WM_SYSKEYDOWN as usize;
-
-    // Solo procesar keydown (ignorar keyup)
-    if !is_keydown {
-        // SAFETY: Pasar el evento al siguiente hook sin procesarlo.
-        return unsafe { CallNextHookEx(None, n_code, w_param, l_param) };
-    }
+    let is_keyup = w_param.0 == WM_KEYUP as usize || w_param.0 == WM_SYSKEYUP as usize;
 
     // SAFETY: GetAsyncKeyState lee el estado fisico de la tecla desde el
     // driver de teclado. Es seguro de llamar desde cualquier thread.
-    let alt_held = unsafe { (GetAsyncKeyState(VK_MENU as i32) as u16) & 0x8000 != 0 };
+    let key_held = |vk: u32| unsafe { (GetAsyncKeyState(vk as i32) as u16) & 0x8000 != 0 };
 
-    if !alt_held {
-        // Alt no presionado: pasar la tecla al sistema normalmente
-        // SAFETY: Pasar el evento al siguiente hook sin procesarlo.
-        return unsafe { CallNextHookEx(None, n_code, w_param, l_param) };
-    }
-
-    // Alt esta presionado: verificar si es una tecla mapeada
-    let command = match vk_code {
-        0x47 => Some(HotkeyCommand::Correct),     // G
-        0x54 => Some(HotkeyCommand::Translate),   // T
-        0x52 => Some(HotkeyCommand::Summarize),   // R
-        0x0D => Some(HotkeyCommand::Generate),    // Enter
-        0x56 => Some(HotkeyCommand::ShowHistory), // V
-        0x48 => Some(HotkeyCommand::ShowHelp),    // H
-        _ => None,
-    };
-
-    if let Some(cmd) = command {
-        if let Some(sender) = get_sender() {
-            let _ = sender.send(cmd);
+    match crate::hotkeys::modifier() {
+        Modifier::Alt => {
+            // Comportamiento previo a P7: solo keydown con Alt presionado.
+            if !is_keydown {
+                return unsafe { CallNextHookEx(None, n_code, w_param, l_param) };
+            }
+            if !key_held(VK_MENU) {
+                return unsafe { CallNextHookEx(None, n_code, w_param, l_param) };
+            }
+            if let Some(cmd) = mapped_command(vk_code) {
+                fire_command(cmd);
+                return LRESULT(1);
+            }
+            unsafe { CallNextHookEx(None, n_code, w_param, l_param) }
         }
-        crate::ui::request_repaint();
-        return LRESULT(1); // Consumir la tecla mapeada
-    }
 
-    // Alt + tecla no mapeada: pasar al sistema (puede ser util para otras apps)
-    // SAFETY: Pasar el evento al siguiente hook en la cadena.
-    unsafe { CallNextHookEx(None, n_code, w_param, l_param) }
+        Modifier::CapsLock if crate::hotkeys::caps_mode() == CapsMode::Hold => {
+            // CapsLock pasa intacto al sistema (alterna mayusculas); solo
+            // keydown de tecla_atajo con CapsLock fisicamente presionado.
+            if !is_keydown || vk_code == VK_CAPITAL {
+                return unsafe { CallNextHookEx(None, n_code, w_param, l_param) };
+            }
+            if !key_held(VK_CAPITAL) {
+                return unsafe { CallNextHookEx(None, n_code, w_param, l_param) };
+            }
+            if let Some(cmd) = mapped_command(vk_code) {
+                fire_command(cmd);
+                return LRESULT(1);
+            }
+            unsafe { CallNextHookEx(None, n_code, w_param, l_param) }
+        }
+
+        // CapsLock + toggle
+        Modifier::CapsLock if vk_code == VK_CAPITAL => {
+            if is_keydown {
+                // Primer tap: latch. Segundo tap: apaga.
+                if LATCHED.swap(false, Ordering::Relaxed) {
+                    tracing::debug!("CapsLock toggle: latch apagado (2do tap).");
+                } else {
+                    LATCHED.store(true, Ordering::Relaxed);
+                }
+                SWALLOW_CAPS_UP.store(true, Ordering::Relaxed);
+                // Consumimos el keydown: el sistema nunca alterna mayusculas.
+                return LRESULT(1);
+            }
+            if is_keyup && SWALLOW_CAPS_UP.swap(false, Ordering::Relaxed) {
+                return LRESULT(1);
+            }
+            unsafe { CallNextHookEx(None, n_code, w_param, l_param) }
+        }
+
+        // CapsLock + toggle: teclas normales
+        Modifier::CapsLock => {
+            if !is_keydown {
+                return unsafe { CallNextHookEx(None, n_code, w_param, l_param) };
+            }
+            let was_latched = LATCHED.swap(false, Ordering::Relaxed);
+            if was_latched {
+                if let Some(cmd) = mapped_command(vk_code) {
+                    // La tecla latcheada dispara y apaga el latch.
+                    fire_command(cmd);
+                    return LRESULT(1);
+                }
+                // Tecla no mapeada: apaga el latch y pasa al sistema
+                // (seguimos escribiendo en la app normalmente).
+            }
+            unsafe { CallNextHookEx(None, n_code, w_param, l_param) }
+        }
+    }
+}
+
+fn fire_command(cmd: HotkeyCommand) {
+    if let Some(sender) = get_sender() {
+        let _ = sender.send(cmd);
+    }
+    crate::ui::request_repaint();
 }

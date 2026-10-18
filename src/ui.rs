@@ -222,8 +222,11 @@ impl QuickActionsApp {
 
     /// Dibuja la pestana de resultado.
     fn draw_result_tab(&mut self, ui: &mut egui::Ui) {
+        let m = modifier_name();
         if self.result_data.is_none() {
-            ui.label("No hay resultado todavía. Selecciona texto y pulsa Alt+T/R/Enter.");
+            ui.label(format!(
+                "No hay resultado todavía. Selecciona texto y pulsa {m}+T/R/Enter."
+            ));
             return;
         }
 
@@ -289,11 +292,12 @@ impl QuickActionsApp {
 
     /// Dibuja la pestana de historial.
     fn draw_history_tab(&mut self, ui: &mut egui::Ui) {
+        let m = modifier_name();
         let entries = self.history_data.as_ref().map(|d| d.entries.clone());
 
         match entries {
             None => {
-                ui.label("No hay historial. Pulsa Alt+V para cargarlo.");
+                ui.label(format!("No hay historial. Pulsa {m}+V para cargarlo."));
             }
             Some(ref entries) if entries.is_empty() => {
                 ui.label("El historial esta vacio.");
@@ -620,6 +624,14 @@ impl eframe::App for QuickActionsApp {
         let needs_repaint = self.window_open || self.toast_visible;
         let repaint_ms = if needs_repaint { 30 } else { 5000 };
         ctx.request_repaint_after(std::time::Duration::from_millis(repaint_ms));
+    }
+}
+
+/// Nombre legible del modificador configurado (para textos e igui).
+fn modifier_name() -> &'static str {
+    match crate::hotkeys::modifier() {
+        crate::hotkeys::Modifier::CapsLock => "CapsLock",
+        crate::hotkeys::Modifier::Alt => "Alt",
     }
 }
 

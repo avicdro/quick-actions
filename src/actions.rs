@@ -13,29 +13,45 @@ use crate::prompts;
 use crate::text_utils;
 use crate::ui::{self, HistoryData, HistoryEntryView, ResultData, UiCommand};
 
-/// Texto de ayuda mostrado con Alt+H o click en tray.
+/// Texto de ayuda mostrado con el hotkey de ayuda o click en tray.
+///
+/// El prefix del modificador es dinamico (P7): "CapsLock" o "Alt" segun
+/// `[hotkeys] modifier`.
 pub fn help_text() -> String {
-    "AI SUITE — Asistente de IA\n\
-     =======================================\n\n\
-     Selecciona texto en cualquier app y pulsa:\n\n\
-     Alt + G      -> Corregir ortografia (pega el resultado)\n\
-     Alt + T      -> Traducir (auto o [idioma])\n\
-     Alt + R      -> Resumir (o [formato])\n\
-     Alt + Enter  -> Generar respuesta\n\
-     Alt + V      -> Ver historial de correcciones\n\
-     Alt + H      -> Mostrar esta ayuda\n\n\
-     =======================================\n\n\
-     DOS MODOS:\n\
-       - Corregir (G): reemplaza el texto pegando el resultado.\n\
-         Si no hay seleccion, intenta Ctrl+A (todo el input).\n\
-       - Traducir/Resumir/Generar (T/R/Enter): muestra el\n\
-         resultado en una ventana sin modificar el texto.\n\n\
-     =======================================\n\n\
-     CONTEXTO OPCIONAL:\n\
-       Escribe [instrucciones] al inicio del texto.\n\
-       Ej: [frances] hola mundo\n\
-       Ej: [5 vinetas] texto largo..."
-        .to_string()
+    let m = match crate::hotkeys::modifier() {
+        crate::hotkeys::Modifier::CapsLock => "CapsLock",
+        crate::hotkeys::Modifier::Alt => "Alt",
+    };
+    let caps_note = if crate::hotkeys::modifier() == crate::hotkeys::Modifier::CapsLock
+        && crate::hotkeys::caps_mode() == crate::hotkeys::CapsMode::Toggle
+    {
+        "  (modo toggle: tap de CapsLock latchea; la proxima tecla dispara)\n"
+    } else {
+        ""
+    };
+
+    format!(
+        "AI SUITE — Asistente de IA\n\
+         =======================================\n\n\
+         Selecciona texto en cualquier app y pulsa:\n\n\
+         {m} + G      -> Corregir ortografia (pega el resultado)\n\
+         {m} + T      -> Traducir (auto o [idioma])\n\
+         {m} + R      -> Resumir (o [formato])\n\
+         {m} + Enter  -> Generar respuesta\n\
+         {m} + V      -> Ver historial de correcciones\n\
+         {m} + H      -> Mostrar esta ayuda\n\n{caps_note}\
+         =======================================\n\n\
+         DOS MODOS:\n\
+           - Corregir (G): reemplaza el texto pegando el resultado.\n\
+             Si no hay seleccion, intenta Ctrl+A (todo el input).\n\
+           - Traducir/Resumir/Generar (T/R/Enter): muestra el\n\
+             resultado en una ventana sin modificar el texto.\n\n\
+         =======================================\n\n\
+         CONTEXTO OPCIONAL:\n\
+           Escribe [instrucciones] al inicio del texto.\n\
+           Ej: [frances] hola mundo\n\
+           Ej: [5 vinetas] texto largo..."
+    )
 }
 
 /// Procesa un comando de hotkey.

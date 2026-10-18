@@ -163,6 +163,16 @@ fn windows_main() {
     // === 6. Iniciar hook de teclado (thread dedicado) ===
     init_sender(hotkey_tx);
     quick_actions::hotkeys::init_suspended(Arc::clone(&suspended));
+    // P7: modificador + capsmode desde config (leer antes del listener).
+    let hk_cfg = config
+        .read()
+        .ok()
+        .map(|c| c.hotkeys.clone())
+        .unwrap_or_default();
+    quick_actions::hotkeys::init_caps(
+        quick_actions::hotkeys::Modifier::from_config(&hk_cfg.modifier),
+        quick_actions::hotkeys::CapsMode::from_config(&hk_cfg.capsmode),
+    );
     start_listener();
     tracing::info!("Hotkeys iniciados. CapsLock+G/T/R/Enter/V/H listos.");
 

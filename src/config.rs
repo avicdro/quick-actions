@@ -76,11 +76,23 @@ impl Default for UiConfig {
 pub struct HotkeysConfig {
     /// Si los atajos globales estan activos.
     pub enabled: bool,
+    /// Modificador de atajos: `"capslock"` (default) o `"alt"`.
+    pub modifier: String,
+    /// Comportamiento del modificador CapsLock: `"hold"` (default:
+    /// mantener presionado para disparar, CapsLock nativo intacto) o
+    /// `"toggle"` (tap queda latched; proxima tecla de atajo dispara y
+    /// descapacita — CapsLock ya no alterna mayusculas nativamente).
+    /// Solo aplica con modifier capslock.
+    pub capsmode: String,
 }
 
 impl Default for HotkeysConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            modifier: "capslock".to_string(),
+            capsmode: "hold".to_string(),
+        }
     }
 }
 
@@ -197,8 +209,10 @@ window_width = 800
 window_height = 600
 history_max_entries = 50
 
-[hotkeys]
+#[hotkeys]
 enabled = true
+modifier = "capslock"   # "capslock" o "alt"
+capsmode = "hold"       # "hold" (mantener) o "toggle" (tap queda latched)
 
 [app]
 autostart = false
@@ -278,6 +292,9 @@ mod tests {
         assert_eq!(c.ollama.model, "gemma4:cloud");
         assert_eq!(c.ui.font_size, 16);
         assert!(c.hotkeys.enabled);
+        // P7
+        assert_eq!(c.hotkeys.modifier, "capslock");
+        assert_eq!(c.hotkeys.capsmode, "hold");
         // P1/P4
         assert!(!c.app.autostart);
         assert!(c.app.check_updates);

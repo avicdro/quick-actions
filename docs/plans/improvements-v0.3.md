@@ -71,7 +71,16 @@
   - Recurso disponible para: tray (`LoadImageW(HINSTANCE, PCWSTR(1), IMAGE_ICON, LR_DEFAULTSIZE|LR_SHARED)`, fallback a `LoadIconW(IDI_APPLICATION)` si falla), iconos de la clase del tray (hIcon + hIconSm) y Explorer (el exe muestra el icono propio)
   - build.rs solo corre when `CARGO_CFG_TARGET_OS == "windows"` (cargo test/clippy en Linux no piden mingw); CI instala mingw-w64 que trae windres+ar ✓
   - Nota del plan original: `include_bytes!` + `CreateIconFromResourceEx` también servía para el tray, pero el recurso embebido añade icono de exe en Explorer — mejor camino
-- [ ] **P7 — CapsLock como toggle configurable** — `[hotkeys] capsmode = "hold" | "toggle"` (default `hold`, comportamiento actual); en toggle, CapsLock trabaja como rapñador y suelto dispara
+- [x] **P7 — CapsLock como toggle configurable** (COMPLETADO 2026-10-18) —
+  - El hook usaba **Alt** hardcodeado (el README ya prometía CapsLock): ahora el modificador es configurable — `[hotkeys] modifier = "capslock"` (default) o `"alt"` (comportamiento previo). Cambiarlo exige reiniciar la app
+  - `[hotkeys] capsmode = "hold" | "toggle"` (con CapsLock):
+    - **hold** (default): CapsLock pasa intacto al sistema (alterna mayusculas de forma natural); los atajos disparan mientras se mantiene presionado. Transparencia: tras disparar, el toggle nativo de mayúsculas queda aplicado
+    - **toggle**: el hook se come CapsLock down+up (`LRESULT(1)`, flag `SWALLOW_CAPS_UP`): tap = latch (`LATCHED: AtomicBool`), la próxima tecla de atajo dispara y apaga, 2do tap apaga, otra tecla pasa al sistema y apaga. En este modo CapsLock NO alterna mayúsculas
+  - P2 intacto: al pausar se resetean latch/flags (passthrough total)
+  - `Modifier`/`CapsMode`/parse en `hotkeys/mod.rs` — ahora **cross-platform en lib.rs** (31 tests; los 2 de parse corren en Linux). `from_config` tolerante a case/whitespace, garbage → default
+  - `key_sim.release_modifiers` espera el VK del modificador configurado (era Alt-only)
+  - Textos dinámicos: `actions::help_text()` (nota de modo toggle incluida), labels de `ui.rs` vía `modifier_name()`, log de arranque del hook
+  - README: config example con `[hotkeys]` + nota de modos
 
 ---
 
@@ -107,3 +116,4 @@ Ver detalle completo en `IMPROVEMENTS.md` (fases 1–5). Resumen del orden acord
 | 2026-10-18 | P4 completado | `feat: P4 check updates...` | GitHub API + ui_protocol extracción (29 tests) |
 | 2026-10-18 | P5 completado | `feat: P5 instalador y desinstalador PS1` | scripts + release.yml dist + README |
 | 2026-10-18 | P6 completado | `feat: P6 icono tray embebido con build.rs` | assets/app.ico + windres + LoadImageW build.rs |
+| 2026-10-18 | P7 completado | `feat: P7 CapsLock hold/toggle configurable` | modifier en config + textos dinámicos (31 tests) |

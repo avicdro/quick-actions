@@ -4,6 +4,7 @@
 pub mod config;
 pub mod error;
 pub mod history;
+pub mod hotkeys; // comandos/parse; win_hook.rs es el windows-only
 pub mod ollama;
 pub mod prompts;
 pub mod runtime;
@@ -19,8 +20,6 @@ pub mod actions;
 pub mod autostart;
 #[cfg(windows)]
 pub mod clipboard;
-#[cfg(windows)]
-pub mod hotkeys;
 #[cfg(windows)]
 pub mod key_sim;
 #[cfg(windows)]

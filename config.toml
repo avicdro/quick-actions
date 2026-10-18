@@ -16,6 +16,16 @@ history_max_entries = 50    # Maximo entradas en historial de correcciones
 # Las hotkeys estan hardcodeadas en codigo (como AHK),
 # pero puedes desactivar modulos enteros aqui:
 enabled = true
+# Modificador: "capslock" (default) o "alt"
+# (comportamiento anterior a P7).
+modifier = "capslock"
+# Como funciona el modificador CapsLock:
+#   "hold"   = mantener presionado CapsLock + tecla para disparar
+#              (el CapsLock nativo sigue alternando mayusculas)
+#   "toggle" = tap de CapsLock queda "latched"; la proxima tecla de atajo
+#              dispara y apaga el latch. Ojo: en este modo CapsLock YA NO
+#              alterna mayusculas nativamente.
+capsmode = "hold"
 
 [app]
 # Iniciar automaticamente con Windows (HKCU\...\Run).

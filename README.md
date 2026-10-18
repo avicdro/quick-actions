@@ -54,6 +54,13 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Autostart
 Coloca `config.toml` junto al `.exe`:
 
 ```toml
+[hotkeys]
+enabled = true
+modifier = "capslock"   # "capslock" (default) o "alt"
+capsmode = "hold"       # "hold": mantener presionado + tecla
+                        # "toggle": tap latched; la proxima tecla lo dispara
+                        #  (en toggle CapsLock ya no alterna mayusculas)
+
 [ollama]
 model = "gemma4:cloud"                          # Modelo a usar
 endpoint = "http://localhost:11434/api/generate" # Endpoint de Ollama
