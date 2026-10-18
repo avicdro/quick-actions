@@ -12,7 +12,7 @@ Suite de atajos globales para IA y productividad en **Windows**, escrita en **Ru
 - 🖥️ **Ventanas de resultado** (egui) — original arriba, resultado abajo, botón copiar, Escape para cerrar
 - 🕓 **Historial persistente** — guardado en JSON con escritura atómica
 - 🔔 **Toasts de estado** con spinner animado durante las peticiones
-- 🥥 **System tray icon** para terminar la app
+- 🥥 **System tray icon** con icono propio embebido en el exe (`.ico`, menú completo: ayuda/config/autostart/pausa/modelo)
 - ⚙️ **Config externa** `config.toml` — edita sin recompilar
 
 ## ⌨️ Atajos (todas usan CapsLock como modificador)
@@ -92,7 +92,7 @@ cargo build --release --target x86_64-pc-windows-gnu
 cp target/x86_64-pc-windows-gnu/release/quick-actions.exe /mnt/c/quick-actions/
 ```
 
-> Requiere `mingw-w64` (`x86_64-w64-mingw32-gcc`).
+> Requiere `mingw-w64` (paquete completo: trae `x86_64-w64-mingw32-gcc`, `windres` y `ar`; las dos últimas solo se usan para embutir el icono del tray).
 
 ### Desde Windows
 

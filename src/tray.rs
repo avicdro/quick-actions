@@ -14,11 +14,12 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW,
-    GetCursorPos, GetMessageW, LoadIconW, PostQuitMessage, RegisterClassExW, SetForegroundWindow,
-    ShowWindow, TrackPopupMenu, TranslateMessage, IDC_ARROW, IDI_APPLICATION, MF_CHECKED,
-    MF_STRING, MSG, SW_HIDE, TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON,
-    TRACK_POPUP_MENU_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE, WM_COMMAND, WM_DESTROY, WM_LBUTTONUP,
-    WM_QUIT, WM_RBUTTONUP, WM_USER, WNDCLASSEXW,
+    GetCursorPos, GetMessageW, LoadIconW, LoadImageW, PostQuitMessage, RegisterClassExW,
+    SetForegroundWindow, ShowWindow, TrackPopupMenu, TranslateMessage, HICON, IDC_ARROW,
+    IDI_APPLICATION, IMAGE_ICON, LR_DEFAULTSIZE, LR_SHARED, MF_CHECKED, MF_STRING, MSG, SW_HIDE,
+    TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TRACK_POPUP_MENU_FLAGS,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WM_COMMAND, WM_DESTROY, WM_LBUTTONUP, WM_QUIT, WM_RBUTTONUP,
+    WM_USER, WNDCLASSEXW,
 };
 
 use crate::ui::UiCommand;
@@ -182,6 +183,25 @@ unsafe fn run_tray_loop() {
     let hinstance =
         GetModuleHandleW(None).unwrap_or(windows::Win32::Foundation::HMODULE(std::ptr::null_mut()));
 
+    // === Icono: recurso embebido del propio exe (build.rs via windres) ===
+    // SAFETY: LoadImageW sobre recursos locales del mostrador es seguro; en
+    // el peor caso cae al icono del sistema definido (comportamiento previo).
+    let hicon = match LoadImageW(
+        windows::Win32::Foundation::HINSTANCE(hinstance.0),
+        // MAKEINTRESOURCE(1): id del ico generado en el build.rs
+        windows::core::PCWSTR(1usize as *const u16),
+        IMAGE_ICON,
+        0,
+        0,
+        LR_DEFAULTSIZE | LR_SHARED,
+    ) {
+        Ok(handle) => HICON(handle.0),
+        Err(e) => {
+            tracing::debug!("Icono embebido no disponible ({e}); icono del sistema.");
+            LoadIconW(None, IDI_APPLICATION).unwrap_or_else(|_| HICON(std::ptr::null_mut()))
+        }
+    };
+
     let class_name = windows::core::w!("QuickActionsTrayWnd");
     let wnd_class = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
@@ -191,6 +211,8 @@ unsafe fn run_tray_loop() {
         hCursor: windows::Win32::UI::WindowsAndMessaging::LoadCursorW(None, IDC_ARROW).unwrap_or(
             windows::Win32::UI::WindowsAndMessaging::HCURSOR(std::ptr::null_mut()),
         ),
+        hIcon: hicon,
+        hIconSm: hicon,
         hbrBackground: HBRUSH(std::ptr::null_mut()),
         ..std::mem::zeroed()
     };
@@ -223,16 +245,6 @@ unsafe fn run_tray_loop() {
     };
 
     let _ = ShowWindow(hwnd, SW_HIDE);
-
-    // SAFETY: LoadIconW(None, IDI_APPLICATION) carga un icono del sistema.
-    // Si falla, logeamos el error pero continuamos (el icono puede ser nulo).
-    let hicon = match LoadIconW(None, IDI_APPLICATION) {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::warn!("LoadIconW fallo, usando icono nulo: {e}");
-            windows::Win32::UI::WindowsAndMessaging::HICON(std::ptr::null_mut())
-        }
-    };
 
     let mut nid = NOTIFYICONDATAW {
         cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,

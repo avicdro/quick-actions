@@ -65,7 +65,12 @@
   - `release.yml`: instala los dos scripts al dist (downloading release = instalable)
   - README: sección "🚀 Instalación" + quitado el claim falso de `%APPDATA%` en Config
   - Scripts sin acentos (encoding-safe para PS 5.1); balance/strings verificados offline (no hay pwsh en WSL — test real pendiente en Windows)
-- [ ] **P6 — Íconos tray/UI reales** — `.ico` embebido (`include_bytes!`) para tray y viewport
+- [x] **P6 — Íconos tray/UI reales** (COMPLETADO 2026-10-18) —
+  - `assets/app.ico` (generado con Pillow): rounded-square navy #0E1526 + rayo ámbar #FFC93C, 8 tamaños (16→256; 20 y 24 para escalado de DPI del taskbar)
+  - **Sin crate extra**: `build.rs` nuevo invoca `windres -O coff` (binutils mingw) → `.o` que se linkea **directamente** con `cargo:rustc-link-arg-bins={obj}` (lección del primer intento: en un archive estático ld descarga miembros sin símbolos → el `.rsrc` no aparecía; con el `.o` directo entra siempre). `1 ICON "app.ico"` id=1
+  - Recurso disponible para: tray (`LoadImageW(HINSTANCE, PCWSTR(1), IMAGE_ICON, LR_DEFAULTSIZE|LR_SHARED)`, fallback a `LoadIconW(IDI_APPLICATION)` si falla), iconos de la clase del tray (hIcon + hIconSm) y Explorer (el exe muestra el icono propio)
+  - build.rs solo corre when `CARGO_CFG_TARGET_OS == "windows"` (cargo test/clippy en Linux no piden mingw); CI instala mingw-w64 que trae windres+ar ✓
+  - Nota del plan original: `include_bytes!` + `CreateIconFromResourceEx` también servía para el tray, pero el recurso embebido añade icono de exe en Explorer — mejor camino
 - [ ] **P7 — CapsLock como toggle configurable** — `[hotkeys] capsmode = "hold" | "toggle"` (default `hold`, comportamiento actual); en toggle, CapsLock trabaja como rapñador y suelto dispara
 
 ---
@@ -101,3 +106,4 @@ Ver detalle completo en `IMPROVEMENTS.md` (fases 1–5). Resumen del orden acord
 | 2026-10-17 | P3 completado | `feat: P3 modelo on-the-fly...` | submenu tray + hot-reload (26 tests) |
 | 2026-10-18 | P4 completado | `feat: P4 check updates...` | GitHub API + ui_protocol extracción (29 tests) |
 | 2026-10-18 | P5 completado | `feat: P5 instalador y desinstalador PS1` | scripts + release.yml dist + README |
+| 2026-10-18 | P6 completado | `feat: P6 icono tray embebido con build.rs` | assets/app.ico + windres + LoadImageW build.rs |
