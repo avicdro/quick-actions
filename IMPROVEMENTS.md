@@ -2,6 +2,10 @@
 
 > Documento maestro para seguimiento de refactorizaciones y mejoras técnicas.
 > Marca con `[x]` las tareas completadas.
+>
+> **Fuente única de verdad del refactor**: las Fases 1–5 se trackean aquí.
+> El bloque de producto (R1–R6 infra + P1–P7 features) quedó registrado en
+> `docs/plans/improvements-v0.3.md` como historial — no duplicar checkboxes ahí.
 
 ---
 
@@ -15,11 +19,21 @@
 | 4 | Testing y abstracción de plataforma | ⬜ Pendiente | 🟢 Baja |
 | 5 | Quick Wins (ganancias rápidas) | ⬜ Pendiente | 🟢 Baja |
 
+> **Bloque producto v0.3 ✅ completado** (R1–R6 + P1–P7, commits `b49336a`..`05b9226`):
+> autostart, pausa de hotkeys, modelo on-the-fly, check de updates, installer PS1,
+> icono tray embebido y CapsLock configurable. 31 tests cross + clippy + cross-check.
+> Pendiente: test manual en Windows.
+
 ---
 
 ## Fase 1: Desacoplamiento y Modularización 🔴
 
-### 1.1 Dividir `ui.rs` (587 líneas → módulos pequeños)
+### 1.1 Dividir `ui.rs` (653 líneas → módulos pequeños)
+
+- [x] Extraer el protocolo UI a `ui_protocol.rs` (hecho en P4, 2026-10-18):
+  `UiCommand`, `ResultData`, `HistoryData`, `HistoryEntryView`, `UiChannels`
+  están **fuera de egui** (cross-platform con tests); `ui.rs` (windows-only,
+  render) los re-exporta
 
 - [ ] Crear `src/ui/window_manager.rs` — gestión de viewport, mostrar/ocultar, centrado
 - [ ] Crear `src/ui/toast.rs` — overlay de estado (loading/error) con animación
@@ -36,6 +50,10 @@
 
 ### 1.2 Extraer `ActionHandler` trait (desacoplar `actions.rs` de `ui.rs`)
 
+- [x] Extraer el protocolo de datos a `ui_protocol.rs` (hecho en P4) — los
+  comandos y structs ya no dependen de egui; 1.2 acota el acople restante:
+  `actions.rs` todavía importa `crate::ui` (re-export de ui_protocol) y
+  `help_text()` genera texto de UI (migrar ambos)
 - [ ] Definir trait `ActionHandler` en `src/actions/trait.rs`:
   ```rust
   pub trait ActionHandler: Send + Sync {
@@ -47,31 +65,40 @@
 - [ ] Inyectar `Arc<dyn ActionHandler>` en `QuickActionsApp` en lugar de llamar `actions::handle_command` directo
 - [ ] Permitir mock en tests
 
-**Criterio de aceptación**: `actions.rs` no importa `ui::*`, test unitario de handler sin UI.
+**Criterio de aceptación**: `actions.rs` importa solo `crate::ui_protocol::...`
+(ya no `crate::ui`), `help_text()` vive en módulo UI, test unitario de handler
+sin UI.
 
 ---
 
 ### 1.3 Eliminar estado global (`OnceLock`)
 
-- [ ] Crear `src/app_state.rs` — struct `AppState` con todos los compartidos:
+- [ ] Crear `src/app_state.rs` — struct `AppState` con lo compartido real (post P1–P7):
   ```rust
   pub struct AppState {
-      pub config: Arc<Config>,
+      pub config: Arc<RwLock<Config>>,             // hot-reload (P3)
+      pub suspendido: Arc<AtomicBool>,             // P2: pausa hotkeys
       pub clipboard: Arc<ClipboardManager>,
       pub history: Arc<Mutex<History>>,
       pub ollama: Arc<OllamaClient>,
+      pub ollama_models: Arc<RwLock<Vec<String>>>, // cache submenu modelo (P3)
       pub ui_tx: Sender<UiCommand>,
       pub action_handler: Arc<dyn ActionHandler>,
-      pub runtime: Arc<Runtime>,  // o &Runtime
+      pub runtime: Arc<Runtime>,                   // o &Runtime
   }
   ```
 - [ ] Pasar `Arc<AppState>` a: `QuickActionsApp`, hotkeys thread, tray thread, workers
 - [ ] Eliminar `SENDER` en `win_hook.rs` → pasar sender por closure en `start_listener(sender)`
+- [ ] Eliminar `SUSPENDED` en `win_hook.rs` (P2) → inyectar el `Arc<AtomicBool>` por `start_listener`
+- [ ] Eliminar `MODIFIER`/`CAPS_MODE` en `hotkeys/mod.rs` (P7) → capturados al crear el listener (config de arranque, no requieren hot-reload)
+- [ ] `LATCHED`/`SWALLOW_CAPS_UP` en `win_hook.rs` (P7): encapsular en el estado del thread del hook o mantener como statics documentados dentro del módulo — decidir al implementar
 - [ ] Eliminar `CONTEXT` en `ui.rs` → pasar `egui::Context` por parámetro o canal
 - [ ] Eliminar `TRAY_DATA` en `tray.rs` → pasar datos en closure de `init_tray`
 - [ ] Mantener `RUNTIME` en `runtime.rs` (aceptable) o mover a `AppState`
 
-**Criterio de aceptación**: Cero `OnceLock`/`static mut` en código de negocio, todo inyectado.
+**Criterio de aceptación**: Cero `OnceLock` en código de negocio y todo
+inyectado; los statics restantes del hook (latch P7) quedan encapsulados y
+documentados en `win_hook`.
 
 ---
 
@@ -116,10 +143,14 @@
 
 ### 2.3 `release_modifiers` async con timeout (no busy-wait bloqueante)
 
+> Nota 2026-10-19: P7 lo dejó **parcial** — ahora espera el VK del modificador
+> configurado (Alt o CapsLock, no solo Alt) pero sigue busy-wait con
+> `thread::sleep`. Falta async + timeout configurable.
+
 - [ ] Mover lógica a `KeySimulator::wait_for_modifiers_release(timeout: Duration) -> Result<()>`
 - [ ] Usar `tokio::time::sleep` + `tokio::time::timeout` en lugar de `thread::sleep` + loop
 - [ ] Ejecutar en `tokio::task::spawn_blocking` (llama WinAPI `GetAsyncKeyState`)
-- [ ] Timeout configurable (default 2s), error si no se libera → toast "Suelta Alt"
+- [ ] Timeout configurable (default 2s), error si no se libera → toast "Suelta el modificador"
 
 **Criterio de aceptación**: Worker no bloquea thread pool esperando tecla.
 
@@ -189,7 +220,7 @@
 ### 4.1 Tests de integración (mock Ollama)
 
 - [ ] Añadir `testcontainers` o `mockito` en `dev-dependencies`
-- [ ] Test: `Alt+G` → clipboard → Ollama mock → clipboard paste → history entry
+- [ ] Test: modificador+G (configurable, ver P7) → clipboard → Ollama mock → clipboard paste → history entry
 - [ ] Test: Historial persiste y carga tras reinicio
 - [ ] Test: Timeout Ollama → retry → success
 - [ ] Test: Cancelación en shutdown
@@ -219,12 +250,12 @@
 |---|--------|---------|----------|
 | 5.1 | Batch/debounce `history.save()` (no en cada push) | `history.rs` | 🟢 Bajo |
 | 5.2 | Mover timeouts/magic numbers a `config.toml` | `key_sim.rs`, `ui.rs` | 🟢 Bajo |
-| 5.3 | Constantes para repaint intervals (30ms/5000ms) | `ui.rs:585` | 🟢 Bajo |
+| 5.3 | Constantes para repaint intervals (30ms/5000ms) | `ui.rs:625` | 🟢 Bajo |
 | 5.4 | Mapear VK codes desde config (no hardcoded 0x47, 0x54...) | `win_hook.rs`, `config.rs` | 🟡 Medio |
 | 5.5 | `OllamaClient` reusa `reqwest::Client` ✓ (ya ok) | `ollama.rs` | — |
-| 5.6 | `ClipboardManager::get_text` — mejorar detección "vacío" (no string match) | `clipboard.rs:62-70` | 🟢 Bajo |
+| 5.6 | `ClipboardManager::get_text` — mejorar detección "vacío" (no string match) | `clipboard.rs` | 🟢 Bajo |
 | 5.7 | `config.toml` — añadir `max_concurrent_actions`, `modifier_release_timeout_ms` | `config.rs` | 🟢 Bajo |
-| 5.8 | `build.sh` — añadir `cargo test` antes de copiar exe | `build.sh` | 🟢 Bajo |
+| 5.8 | `build.sh` — cargo test antes de copiar exe | ✅ **hecho en R6** (preflight: fmt + test + clippy) | — |
 
 ---
 
@@ -255,6 +286,16 @@ graph TD
 | Fecha | Fase | Tarea | Commit | Notas |
 |-------|------|-------|--------|-------|
 | 2026-08-09 | — | Documento creado | — | Baseline |
+| 2026-10-17 | R | R1–R6 infra: LICENSE, panic hook, CI (ci.yml), release.yml, build.sh preflight (fmt+test+clippy), rustfmt repo | `b49336a` | |
+| 2026-10-17 | — | rustls 0.23.46 (fix CVE TLS 1.3, alert #1) | `ea0c889` | PR #1 dependabot |
+| 2026-10-17 | P | P1 autostart: HKCU Run + toggle tray + persistencia toml_edit | `24d77a0` | |
+| 2026-10-17 | P | P2 pausa de hotkeys: `SUSPENDED` passthrough total + toast ámbar | `54fbede` | docs `902c55c` |
+| 2026-10-17 | P | P3 modelo on-the-fly: submenu tray + hot-reload config | `b9b1c06` | `write_config_key` común |
+| 2026-10-18 | P | P4 check de updates (GitHub API) + **extracción `ui_protocol.rs`** | `480d7eb` | 29 tests |
+| 2026-10-18 | P | P5 install/uninstall PS1 + assets en release | `fb57fcd` | test en Windows pendiente |
+| 2026-10-18 | P | P6 icono tray propio embebido: `build.rs` windres → `.rsrc` linkeado directo | `1cbf6cc` | exe + Explorer |
+| 2026-10-18 | P | P7 CapsLock como modificador configurable (hold/toggle) | `05b9226` | hotkeys cross → 31 tests |
+| 2026-10-19 | — | Doc actualizado al estado post-P1–P7 | *(commit docs)* | AppState sketch real, 5.8 hecho |
 
 ---
 
@@ -294,10 +335,11 @@ cargo fmt --all
 ## Próximos Pasos Inmediatos
 
 1. [ ] **Crear branch** `refactor/phase-1-decoupling`
-2. [ ] **Implementar 1.3** (AppState + eliminar OnceLock) — base para todo lo demás
+2. [ ] **Implementar 1.3** (AppState con el sketch real de arriba + eliminar OnceLock) — base para todo lo demás
 3. [ ] **Implementar 1.4** (Platform traits) — permite tests reales
 4. [ ] **Implementar 5.1-5.3** (Quick Wins) — valor inmediato, bajo riesgo
 5. [ ] **Revisar y ajustar** este documento según aprendizajes
+6. [ ] **Antes de refactor**: test manual en Windows de la v0.3 (P1–P7) — ver plan de prueba en `docs/plans/improvements-v0.3.md`
 
 ---
 
