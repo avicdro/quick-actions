@@ -139,6 +139,7 @@ impl Default for PathsConfig {
 
 /// Configuracion futura del launcher de apps.
 #[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default)]
 pub struct LauncherConfig {
     /// Si el launcher esta activo.
     #[allow(dead_code)]
@@ -147,6 +148,7 @@ pub struct LauncherConfig {
 
 /// Configuracion futura del overlay de notificaciones.
 #[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default)]
 pub struct NotificationsConfig {
     /// Si las notificaciones estan activas.
     #[allow(dead_code)]
@@ -285,6 +287,25 @@ enabled = false
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shipped_config_toml_parses() {
+        // Garantia: el template que build.sh distribuye SIEMPRE parsea.
+        // (P5: el template roto con [launcher]/[notifications] vacios hicieron
+        // fallar el arranque con dialog de error.)
+        let raw = include_str!("../config.toml");
+        let parsed = toml::from_str::<Config>(raw);
+        assert!(parsed.is_ok(), "config.toml del repo invalido: {parsed:?}");
+    }
+
+    #[test]
+    fn empty_future_sections_default_disabled() {
+        // Config legada con secciones presentes pero sin campos: no rompe.
+        let c = toml::from_str::<Config>("[launcher]\n[notifications]\n")
+            .expect("secciones vacias deben usar defaults");
+        assert!(!c.launcher.enabled);
+        assert!(!c.notifications.enabled);
+    }
 
     #[test]
     fn config_default_values() {

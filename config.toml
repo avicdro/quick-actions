@@ -42,6 +42,6 @@ chrome = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
 
 # Para fases futuras (app-launcher, notifications)
 [launcher]
-# enabled = false  # Fase 4
+enabled = false # Fase 4
 [notifications]
-# enabled = false  # Fase 5
+enabled = false # Fase 5

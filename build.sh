@@ -32,7 +32,13 @@ cargo build --release --target "$WINDOWS_TARGET"
 echo "Copiando a $DEST_DIR ..."
 mkdir -p "$DEST_DIR"
 cp "$RELEASE_DIR/quick-actions.exe" "$DEST_DIR/"
-cp "$PROJECT_DIR/config.toml" "$DEST_DIR/"
+# Config: solo si no existe en destino — no pisar la personalizada del usuario.
+if [ ! -f "$DEST_DIR/config.toml" ]; then
+    cp "$PROJECT_DIR/config.toml" "$DEST_DIR/"
+    echo "Config copiada (no existia)."
+else
+    echo "Config existente conservada en $DEST_DIR/config.toml."
+fi
 
 echo ""
 echo "Build completado exitosamente."
