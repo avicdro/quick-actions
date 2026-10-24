@@ -148,7 +148,7 @@ fn windows_main() {
     let config_path_for_tray = exe_dir.join("config.toml");
     init_tray(
         ui_tx_for_tray,
-        config_path_for_tray,
+        config_path_for_tray.clone(),
         Arc::clone(&suspended),
         Arc::clone(&config),
         Arc::clone(&ollama_models),
@@ -189,6 +189,8 @@ fn windows_main() {
         Arc::clone(&clipboard),
         Arc::clone(&history),
         ui_channels.tx.clone(),
+        Arc::clone(&ollama_models),
+        config_path_for_tray.clone(),
     );
 
     let options = eframe::NativeOptions {

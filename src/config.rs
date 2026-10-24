@@ -292,8 +292,19 @@ enabled = false
         Self::write_config_key(path, "ollama", "model", model)
     }
 
-    /// Setea `doc[section][key] = value` preservando el resto del documento.
-    fn write_config_key(
+    /// Setea `doc[section][key] = value` preservando el resto del documento
+    /// y su formato: crea `section` si falta; `Missing` si el TOML es invalido.
+    ///
+    /// Publica desde U4 (pestana Ajustes); los wrappers `write_autostart`,
+    /// `write_ollama_model`, `write_hotkey` siguen como conveniencias.
+    ///
+    /// Si la seccion `<seccion>` no existe, se crea al final del archivo.
+    ///
+    /// # Errors
+    ///
+    /// Devuelve `AppError::Config` si falla leer, escribir, o si el TOML es
+    /// invalido (en ese caso no modifica nada).
+    pub fn write_config_key(
         path: &Path,
         section: &str,
         key: &str,

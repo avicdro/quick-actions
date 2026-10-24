@@ -123,8 +123,10 @@ pub enum UiCommand {
     ShowHelp(String),
     /// Actualizar el estado (loading/error). Cadena vacia = sin estado.
     SetStatus(String),
-    /// Pausar/resumir los atajos (toast persistente "Pausado").
+    /// Pausar/resumir los atajos (P2).
     SetPaused(bool),
+    /// U4: abrir la ventana en la pestana Ajustes (menu del tray).
+    ShowAjustes,
     /// Aviso de nueva version (pestaña Resultado + enlace GitHub).
     ShowUpdate {
         version: String,

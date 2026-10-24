@@ -22,10 +22,11 @@
   - Dispatch: `actions::handle_command` lee flag del snapshot y corta con toast Notice "Atajo '{key}' desactivado (Ajustes)"
   - Tray submenu "Atajos": 6 checks + "Todos"/"Ninguno" (persisten via `write_config_key`; ids 1201–1208)
   - Se integra con la pausa total P2 (SUSPENDED manda antes)
-- [ ] **U4 — Pestaña Ajustes en la GUI**:
+- [x] **U4 — Pestaña Ajustes en la GUI**:
   - `Tab::Ajustes`: modelo (TextField + ComboBox de la cache Ollama), endpoint, timeout, modifier/capsmode combos (+label "requiere reinicio" si difiere del vigente), 6 checks de atajos, autostart, check_updates, repository, botón "Abrir config.toml"
   - Persistencia on-change via `write_config_key` + update del `RwLock<Config>` (efecto vivo)
   - `QuickActionsApp::new` recibe cache de modelos (`Arc<RwLock<Vec<String>>>`) y path del config
+  - Extra: el click "Configuración" del tray ya NO abre el editor — manda `UiCommand::ShowAjustes` y abre la pestaña (el notepad queda tras "Abrir config.toml (avanzado)")
 - [ ] **U5 — Refresh visual (egui)**:
   - Tema custom: navy oscuro (#0D1321/#121B2E) + accent ámbar #FFC93C (same family que el icono tray), rounding, selection, hover
   - Toast: pill con shadow + radius
@@ -40,3 +41,4 @@
 | 2026-10-24 | U2 | — | default `modifier="alt"` en config.rs/config.toml/README + config instalada; log de arranque genérico |
 | 2026-10-24 | U1 | — | `ToastKind` (Notice 3.5s / Error 6s / Loading sin expiry) + icono por clase |
 | 2026-10-24 | U3 | — | 6 bools en `[hotkeys]` + guard en dispatch + submenu tray (ids 1201–1208) + config.instalada parcheada |
+| 2026-10-24 | U4 | — | Tab::Ajustes (Ollama/Hotkeys/App, persistencia on-change); tray "Configuración" repuntado a `ShowAjustes`; `write_config_key` publicada; tray~`request_models_refresh()` pub |

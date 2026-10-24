@@ -35,6 +35,8 @@ enum Tab {
     Result,
     History,
     Help,
+    /// U4: ajustes in-app (config.toml editado sin salir de la GUI).
+    Ajustes,
 }
 
 /// Estado de la aplicacion de UI.
@@ -93,6 +95,12 @@ pub struct QuickActionsApp {
     toast_expiry: Option<std::time::Instant>,
     /// Si hay aviso de update activo: URL de descarga en pestaña Resultado.
     update_url: Option<String>,
+
+    // --- Ajustes (U4) ---
+    /// Cache compartida de modelos Ollama (la misma que el tray refresca).
+    models_ref: Arc<Mutex<Vec<String>>>,
+    /// Path absoluto del config.toml (persistencia de Ajustes).
+    config_path: std::path::PathBuf,
 }
 
 impl QuickActionsApp {
@@ -104,6 +112,8 @@ impl QuickActionsApp {
         clipboard: Arc<ClipboardManager>,
         history: Arc<Mutex<History>>,
         ui_tx: std::sync::mpsc::Sender<UiCommand>,
+        models_ref: Arc<Mutex<Vec<String>>>,
+        config_path: std::path::PathBuf,
     ) -> Self {
         Self {
             ui_rx,
@@ -112,6 +122,8 @@ impl QuickActionsApp {
             clipboard,
             history,
             ui_tx,
+            models_ref,
+            config_path,
             result_data: None,
             result_original: String::new(),
             result_resultado: String::new(),
@@ -155,6 +167,11 @@ impl QuickActionsApp {
                 UiCommand::ShowHelp(text) => {
                     self.help_text = text;
                     self.current_tab = Tab::Help;
+                    self.window_open = true;
+                }
+                // U4: "Configuración" del tray abre la pestana Ajustes.
+                UiCommand::ShowAjustes => {
+                    self.current_tab = Tab::Ajustes;
                     self.window_open = true;
                 }
                 UiCommand::SetStatus(msg) => {
@@ -377,6 +394,314 @@ impl QuickActionsApp {
             ui.label(&self.help_text);
         });
     }
+
+    /// Dibuja la pestana de ajustes (U4): config.toml editable desde la GUI.
+    ///
+    /// Cada widget persiste al momento del cambio (`Config::write_config_key`
+    /// preserva comentarios via toml_edit) y replica el valor en el `RwLock`
+    /// compartido para efecto inmediato. Solo el modificador/capsmode exige
+    /// reinicio (los statics del hook se levantan al arrancar).
+    fn draw_settings_tab(&self, ui: &mut egui::Ui) {
+        // Snapshot: bajo el lock SOLO para clonar (no sostener el guard de
+        // lectura mientras la UI dibuja: los commits puntuales hacen write()).
+        let snapshot = self.config.read().ok().map(|c| c.clone());
+        let mut cfg = match snapshot {
+            Some(c) => c,
+            None => {
+                ui.label("Config bloqueada (poisoned). Revisa logs/panic.log.");
+                return;
+            }
+        };
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+
+            // ================================================== Ollama
+            ui.add_space(4.0);
+            ui.strong("Ollama");
+            ui.separator();
+
+            // Modelo: campo libre + dropdown de la cache compartida.
+            ui.horizontal(|ui| {
+                ui.label("Modelo:");
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut cfg.ollama.model)
+                            .desired_width(200.0)
+                            .font(egui::TextStyle::Monospace),
+                    )
+                    .changed()
+                {
+                    self.persist_ollama_full(&cfg.ollama);
+                }
+                let models = self
+                    .models_ref
+                    .lock()
+                    .ok()
+                    .map(|m| m.clone())
+                    .unwrap_or_default();
+                let mut box_selected = false;
+                egui::ComboBox::from_id_salt("combo_modelo")
+                    .selected_text(cfg.ollama.model.as_str())
+                    .width(190.0)
+                    .show_ui(ui, |ui| {
+                        if models.is_empty() {
+                            let _ = ui.selectable_label(false, "(lista vacia: pulsa Actualizar)");
+                        }
+                        for model in models {
+                            if ui
+                                .selectable_value(&mut cfg.ollama.model, model.clone(), &model)
+                                .clicked()
+                            {
+                                box_selected = true;
+                            }
+                        }
+                    });
+                if box_selected {
+                    self.persist_ollama_full(&cfg.ollama);
+                }
+            });
+
+            // Endpoint (fuera de horizontal para no acortar el campo).
+            ui.label("Endpoint:");
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut cfg.ollama.endpoint)
+                        .hint_text("http://localhost:11434/api/generate")
+                        .desired_width(420.0),
+                )
+                .changed()
+            {
+                self.persist_ollama_full(&cfg.ollama);
+            }
+
+            // Timeout (DragValue ya clampa al rango).
+            ui.horizontal(|ui| {
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut cfg.ollama.timeout_seconds)
+                            .range(5..=600)
+                            .speed(0.5)
+                            .suffix(" s"),
+                    )
+                    .changed()
+                {
+                    self.persist_ollama_full(&cfg.ollama);
+                }
+                ui.label("Timeout de la peticion");
+            });
+
+            // ================================================== Hotkeys
+            ui.add_space(8.0);
+            ui.strong("Atajos");
+            ui.separator();
+
+            // Modificador (alt/capslock) — requiere reinicio (statics del hook).
+            let modifier_applied = crate::hotkeys::modifier_name().to_lowercase();
+            let mut modifier_changed = false;
+            egui::ComboBox::from_label("Modificador")
+                .selected_text(cfg.hotkeys.modifier.clone())
+                .width(140.0)
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_value(&mut cfg.hotkeys.modifier, "alt".to_string(), "alt")
+                        .clicked()
+                    {
+                        modifier_changed = true;
+                    }
+                    if ui
+                        .selectable_value(
+                            &mut cfg.hotkeys.modifier,
+                            "capslock".to_string(),
+                            "capslock",
+                        )
+                        .clicked()
+                    {
+                        modifier_changed = true;
+                    }
+                });
+            if modifier_changed {
+                let _ = crate::config::Config::write_config_key(
+                    &self.config_path,
+                    "hotkeys",
+                    "modifier",
+                    cfg.hotkeys.modifier.clone(),
+                );
+                if let Ok(mut c) = self.config.write() {
+                    c.hotkeys.modifier = cfg.hotkeys.modifier.clone();
+                }
+            }
+            if cfg.hotkeys.modifier != modifier_applied {
+                ui.colored_label(
+                    egui::Color32::from_rgb(255, 196, 92),
+                    "↻ El cambio de modificador requiere reiniciar la app",
+                );
+            }
+
+            // Capsmode: derivar bool <-> "toggle"/"hold"; solo con capslock.
+            let capsmode_applied = match crate::hotkeys::caps_mode() {
+                crate::hotkeys::CapsMode::Toggle => "toggle",
+                crate::hotkeys::CapsMode::Hold => "hold",
+            };
+            let mut caps_toggle = cfg.hotkeys.capsmode == "toggle";
+            let caps_checked = ui.add_enabled(
+                cfg.hotkeys.modifier == "capslock",
+                egui::Checkbox::new(
+                    &mut caps_toggle,
+                    "CapsLock modo toggle (tap latched; ya no alterna mayusculas)",
+                ),
+            );
+            if caps_checked.changed() {
+                cfg.hotkeys.capsmode = if caps_toggle { "toggle" } else { "hold" }.to_string();
+                let _ = crate::config::Config::write_config_key(
+                    &self.config_path,
+                    "hotkeys",
+                    "capsmode",
+                    cfg.hotkeys.capsmode.clone(),
+                );
+                if let Ok(mut c) = self.config.write() {
+                    c.hotkeys.capsmode = cfg.hotkeys.capsmode.clone();
+                }
+            }
+            if cfg.hotkeys.capsmode != capsmode_applied {
+                ui.colored_label(
+                    egui::Color32::from_rgb(255, 196, 92),
+                    "↻ El cambio de capsmode requiere reiniciar la app",
+                );
+            }
+
+            // Pausa modular per-atajo (U3).
+            ui.add_space(2.0);
+            ui.label("Pausar individualmente:");
+            for (cmd, label, desc) in crate::hotkeys::HOTKEY_ACTIONS {
+                let mut on = crate::hotkeys::is_hotkey_enabled(cmd, &cfg.hotkeys);
+                if ui
+                    .checkbox(
+                        &mut on,
+                        format!("{desc} ({}+{label})", crate::hotkeys::modifier_name()),
+                    )
+                    .changed()
+                {
+                    let _ = crate::config::Config::write_hotkey(
+                        &self.config_path,
+                        cmd.config_field(),
+                        on,
+                    );
+                    if let Ok(mut c) = self.config.write() {
+                        *crate::hotkeys::hotkey_switch(cmd, &mut c.hotkeys) = on;
+                    }
+                }
+            }
+
+            // ================================================== App
+            ui.add_space(8.0);
+            ui.strong("App");
+            ui.separator();
+
+            // Autostart: estado vigente de configuracion (el tray/git writes
+            // ya repican el registro); al cambiar, sincroniza registro+config.
+            let mut autostart = cfg.app.autostart;
+            if ui.checkbox(&mut autostart, "Iniciar con Windows").changed() {
+                match crate::autostart::set_enabled(autostart) {
+                    Ok(()) => {
+                        let _ =
+                            crate::config::Config::write_autostart(&self.config_path, autostart);
+                        if let Ok(mut c) = self.config.write() {
+                            c.app.autostart = autostart;
+                        }
+                        let msg = if autostart {
+                            "Auto-arranque activado"
+                        } else {
+                            "Auto-arranque desactivado"
+                        };
+                        let _ = self.ui_tx.send(UiCommand::SetStatus(msg.to_string()));
+                    }
+                    Err(e) => {
+                        let _ = self.ui_tx.send(UiCommand::SetStatus(format!("Error: {e}")));
+                    }
+                }
+                request_repaint();
+            }
+
+            // Check de updates.
+            if ui
+                .checkbox(
+                    &mut cfg.app.check_updates,
+                    "Avisar de nuevas versiones al arrancar",
+                )
+                .changed()
+            {
+                let _ = crate::config::Config::write_config_key(
+                    &self.config_path,
+                    "app",
+                    "check_updates",
+                    cfg.app.check_updates,
+                );
+                if let Ok(mut c) = self.config.write() {
+                    c.app.check_updates = cfg.app.check_updates;
+                }
+            }
+
+            // Repository.
+            ui.label("Repositorio (para el check de updates):");
+            if ui
+                .add(egui::TextEdit::singleline(&mut cfg.app.repository).desired_width(220.0))
+                .changed()
+            {
+                let _ = crate::config::Config::write_config_key(
+                    &self.config_path,
+                    "app",
+                    "repository",
+                    cfg.app.repository.clone(),
+                );
+                if let Ok(mut c) = self.config.write() {
+                    c.app.repository = cfg.app.repository.clone();
+                }
+            }
+        });
+
+        // ================================================== Botones
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            if ui.button("Abrir config.toml (avanzado)").clicked() {
+                let _ = std::process::Command::new("notepad")
+                    .arg(&self.config_path)
+                    .spawn();
+            }
+            if ui.button("Actualizar lista de modelos").clicked() {
+                crate::tray::request_models_refresh();
+            }
+        });
+    }
+
+    /// Persiste la seccion [ollama] completa (model/endpoint/timeout) y la
+    /// replica en el RwLock. Mas simple que adivinar cual key cambio: la
+    /// seccion es chica y toml_edit preserva el formato de las demas.
+    fn persist_ollama_full(&self, ollama: &crate::config::OllamaConfig) {
+        let _ = crate::config::Config::write_config_key(
+            &self.config_path,
+            "ollama",
+            "model",
+            ollama.model.clone(),
+        );
+        let _ = crate::config::Config::write_config_key(
+            &self.config_path,
+            "ollama",
+            "endpoint",
+            ollama.endpoint.clone(),
+        );
+        let _ = crate::config::Config::write_config_key(
+            &self.config_path,
+            "ollama",
+            "timeout_seconds",
+            // toml_edit solo tiene From<i64>: el campo ya esta saneado y
+            // clampado a 5..=600 en la UI.
+            i64::try_from(ollama.timeout_seconds).unwrap_or(300),
+        );
+        if let Ok(mut c) = self.config.write() {
+            c.ollama = ollama.clone();
+        }
+    }
 }
 
 impl eframe::App for QuickActionsApp {
@@ -452,6 +777,7 @@ impl eframe::App for QuickActionsApp {
                         (Tab::Result, "Resultado"),
                         (Tab::History, "Historial"),
                         (Tab::Help, "Ayuda"),
+                        (Tab::Ajustes, "Ajustes"),
                     ];
                     for (tab, label) in tabs {
                         if ui
@@ -469,6 +795,7 @@ impl eframe::App for QuickActionsApp {
                     Tab::Result => self.draw_result_tab(ui),
                     Tab::History => self.draw_history_tab(ui),
                     Tab::Help => self.draw_help_tab(ui),
+                    Tab::Ajustes => self.draw_settings_tab(ui),
                 }
             });
         }

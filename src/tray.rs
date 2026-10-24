@@ -165,6 +165,13 @@ fn set_ollama_model(model: &str) {
 
 /// Refetch de la lista de modelos en background (torus el submenu
 /// fresco sin bloquear el thread del tray).
+///
+/// Publica desde U4: la pestana Ajustes la invoca para refrescar la cache
+/// compartida de modelos (el dropdown de la GUI la lee por `models_ref`).
+pub fn request_models_refresh() {
+    refresh_models();
+}
+
 fn refresh_models() {
     let Some(data) = TRAY_DATA.get() else {
         return;
@@ -401,9 +408,10 @@ extern "system" fn tray_wnd_proc(
                     }
                     ID_TRAY_CONFIG => {
                         if let Some(data) = TRAY_DATA.get() {
-                            let _ = std::process::Command::new("notepad")
-                                .arg(&data.config_path)
-                                .spawn();
+                            // U4: abrir la pestana Ajustes de la GUI (no
+                            // un editor de texto);
+                            let _ = data.ui_tx.send(UiCommand::ShowAjustes);
+                            crate::ui::request_repaint();
                         }
                     }
                     ID_TRAY_AUTOSTART => {
@@ -649,9 +657,9 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         }
         ID_TRAY_CONFIG => {
             if let Some(data) = TRAY_DATA.get() {
-                let _ = std::process::Command::new("notepad")
-                    .arg(&data.config_path)
-                    .spawn();
+                // U4: abrir la pestana Ajustes de la GUI (no un editor);
+                let _ = data.ui_tx.send(UiCommand::ShowAjustes);
+                crate::ui::request_repaint();
             }
         }
         ID_TRAY_AUTOSTART => {
