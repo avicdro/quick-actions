@@ -4,6 +4,81 @@
 //! estructuras de datos y comandos no dependen de egui/Windows.
 //! El render vive en `crate::ui` (windows-only).
 
+/// Duracion (segundos) de un toast de tipo Notice (U1).
+pub const NOTICE_TOAST_SECS: f64 = 3.5;
+/// Errores: mas tiempo para poder leer el mensaje.
+pub const ERROR_TOAST_SECS: f64 = 6.0;
+
+/// Clase de toast y su comportamiento de autodesaparicion (U1).
+///
+/// El texto plano de `SetStatus` es el vehiculo, la clase deduce:
+/// - `Loading`: mensaje termina en `...` (spinner, NO expira)
+/// - `Error`: mensaje empieza con "Error" (expira en 6s)
+/// - `Notice`: cualquier otro aviso (expira en 3.5s)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToastKind {
+    /// Spinner mientras corre una peticion (sin expiry).
+    Loading,
+    /// Aviso transitorio (auto-oculta a los NOTICE_TOAST_SECS).
+    Notice,
+    /// Mensaje de error (auto-oculta a los ERROR_TOAST_SECS).
+    Error,
+}
+
+impl ToastKind {
+    /// Segundos hasta auto-ocultarse; `None` = visible hasta nuevo aviso.
+    #[must_use]
+    pub fn expiry_secs(self) -> Option<f64> {
+        match self {
+            Self::Loading => None,
+            Self::Notice => Some(NOTICE_TOAST_SECS),
+            Self::Error => Some(ERROR_TOAST_SECS),
+        }
+    }
+}
+
+/// Clasifica un mensaje de status en `ToastKind`.
+///
+/// Reglas simples y deterministas sobre el texto plano (los senders nunca
+/// cambian su formato: los "Corrigiendo.../Traduciendo.../..." mantienen
+/// los tres puntos de seria loading).
+#[must_use]
+pub fn classify_status(msg: &str) -> ToastKind {
+    if msg.starts_with("Error") {
+        ToastKind::Error
+    } else if msg.trim_end().ends_with("...") {
+        ToastKind::Loading
+    } else {
+        ToastKind::Notice
+    }
+}
+
+#[cfg(test)]
+mod toast_tests {
+    use super::*;
+
+    #[test]
+    fn classify_statuses() {
+        // Loading: suffix "..." (sin expiry)
+        assert_eq!(classify_status("Corrigiendo..."), ToastKind::Loading);
+        assert_eq!(classify_status("Traduciendo..."), ToastKind::Loading);
+        // Error: prefijo "Error" gana",
+        assert_eq!(classify_status("Error: x"), ToastKind::Error);
+        assert_eq!(classify_status("Error..."), ToastKind::Error);
+        // Notice: display de
+        assert_eq!(classify_status("Modelo cambiado"), ToastKind::Notice);
+        assert_eq!(classify_status("Auto-arranque activado"), ToastKind::Notice);
+        assert_eq!(classify_status(""), ToastKind::Notice);
+    }
+
+    #[test]
+    fn expiry_durations() {
+        assert_eq!(ToastKind::Loading.expiry_secs(), None);
+        assert_eq!(ToastKind::Notice.expiry_secs(), Some(NOTICE_TOAST_SECS));
+        assert_eq!(ToastKind::Error.expiry_secs(), Some(ERROR_TOAST_SECS));
+    }
+}
+
 /// Datos para mostrar una ventana de resultado.
 #[derive(Debug, Clone)]
 pub struct ResultData {

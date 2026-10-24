@@ -87,8 +87,10 @@ pub struct QuickActionsApp {
     toast_was_visible: bool,
     /// Si el toast es de error (rojo) o loading (azul).
     toast_is_error: bool,
-    /// Si los atajos estan pausados (toast "Pausado" persistente).
+    /// Si los atajos estan pausados (P2).
     paused: bool,
+    /// U1: momento en el que el toast se auto-oculta (None = hasta nuevo aviso).
+    toast_expiry: Option<std::time::Instant>,
     /// Si hay aviso de update activo: URL de descarga en pestaña Resultado.
     update_url: Option<String>,
 }
@@ -125,6 +127,7 @@ impl QuickActionsApp {
             toast_was_visible: false,
             toast_is_error: false,
             paused: false,
+            toast_expiry: None,
             update_url: None,
         }
     }
@@ -158,9 +161,15 @@ impl QuickActionsApp {
                     // NO abrir la ventana principal. Solo actualizar el toast.
                     if msg.is_empty() {
                         self.toast_visible = false;
+                        self.toast_expiry = None;
                     } else {
                         self.toast_is_error = msg.starts_with("Error");
                         self.toast_visible = true;
+                        // U1: clase deduce el auto-hide; Loading nunca expira.
+                        let kind = crate::ui_protocol::classify_status(&msg);
+                        self.toast_expiry = kind.expiry_secs().map(|secs| {
+                            std::time::Instant::now() + std::time::Duration::from_secs_f64(secs)
+                        });
                     }
                     self.status = msg;
                 }
@@ -169,11 +178,19 @@ impl QuickActionsApp {
                     if v {
                         self.status = "Pausado — atajos desactivados".to_string();
                         self.toast_visible = true;
+                        // U1: ya no vive al infinito (Notice 3.5s).
+                        self.toast_expiry = Some(
+                            std::time::Instant::now()
+                                + std::time::Duration::from_secs_f64(
+                                    crate::ui_protocol::NOTICE_TOAST_SECS,
+                                ),
+                        );
                     } else {
                         // Reanudar: limpiar status para que el proximo
                         // SetStatus de una accion defina el toast.
                         self.status = String::new();
                         self.toast_visible = false;
+                        self.toast_expiry = None;
                     }
                 }
                 UiCommand::ShowUpdate { version, url, body } => {
@@ -369,6 +386,17 @@ impl eframe::App for QuickActionsApp {
             set_context(ctx);
         }
 
+        // U1: toasts transitorios (auto-hide).
+        if self.toast_visible
+            && self
+                .toast_expiry
+                .is_some_and(|exp| std::time::Instant::now() >= exp)
+        {
+            self.toast_visible = false;
+            self.toast_expiry = None;
+            self.status.clear();
+        }
+
         // Cancelar cierre de ventana (evita que eframe cierre la app).
         // En su lugar, ocultamos la ventana.
         if ctx.input(|i| i.viewport().close_requested()) {
@@ -464,6 +492,8 @@ impl eframe::App for QuickActionsApp {
             let status = self.status.clone();
             let is_error = self.toast_is_error;
             let paused = self.paused;
+            // U1: clase del toast para elegir icono (spinner solo en loading).
+            let kind = crate::ui_protocol::classify_status(&status);
 
             ctx.show_viewport_immediate(
                 toast_id,
@@ -542,7 +572,7 @@ impl eframe::App for QuickActionsApp {
                                             bar_color,
                                         );
                                     }
-                                } else if !is_error {
+                                } else if kind == crate::ui_protocol::ToastKind::Loading {
                                     // Spinner con tamaño personalizado
                                     let (rect, _) = ui.allocate_exact_size(
                                         egui::vec2(20.0, 20.0),
@@ -569,6 +599,26 @@ impl eframe::App for QuickActionsApp {
                                         dot_pos,
                                         3.0,
                                         egui::Color32::from_rgb(140, 180, 255),
+                                    );
+                                } else if kind == crate::ui_protocol::ToastKind::Notice {
+                                    // Aviso informativo: circulo ambar con "i"
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(20.0, 20.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    let painter = ui.painter();
+                                    let center = rect.center();
+                                    painter.circle_filled(
+                                        center,
+                                        9.0,
+                                        egui::Color32::from_rgb(232, 176, 60),
+                                    );
+                                    painter.text(
+                                        center,
+                                        egui::Align2::CENTER_CENTER,
+                                        "i",
+                                        egui::FontId::proportional(12.0),
+                                        egui::Color32::from_rgb(40, 32, 12),
                                     );
                                 } else {
                                     // Icono de error: circulo con !
