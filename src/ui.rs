@@ -69,8 +69,6 @@ pub struct QuickActionsApp {
     result_copied: bool,
     /// Datos del historial.
     history_data: Option<HistoryData>,
-    /// Texto de ayuda.
-    help_text: String,
     /// Estado actual (loading, error). Vacio = sin estado.
     status: String,
 
@@ -101,6 +99,8 @@ pub struct QuickActionsApp {
     models_ref: Arc<Mutex<Vec<String>>>,
     /// Path absoluto del config.toml (persistencia de Ajustes).
     config_path: std::path::PathBuf,
+    /// U5: si ya aplicamos el tema custom (una sola vez al primer frame).
+    style_applied: bool,
 }
 
 impl QuickActionsApp {
@@ -124,12 +124,12 @@ impl QuickActionsApp {
             ui_tx,
             models_ref,
             config_path,
+            style_applied: false,
             result_data: None,
             result_original: String::new(),
             result_resultado: String::new(),
             result_copied: false,
             history_data: None,
-            help_text: actions::help_text(),
             status: String::new(),
             current_tab: Tab::Result,
             window_open: false,
@@ -164,14 +164,15 @@ impl QuickActionsApp {
                     self.current_tab = Tab::History;
                     self.window_open = true;
                 }
-                UiCommand::ShowHelp(text) => {
-                    self.help_text = text;
-                    self.current_tab = Tab::Help;
-                    self.window_open = true;
-                }
                 // U4: "Configuración" del tray abre la pestana Ajustes.
                 UiCommand::ShowAjustes => {
                     self.current_tab = Tab::Ajustes;
+                    self.window_open = true;
+                }
+                // U5: la ayuda se dibuja estructurada (el texto del mensaje
+                // queda obsoleto; se mantiene por compatibilidad del canal).
+                UiCommand::ShowHelp(_) => {
+                    self.current_tab = Tab::Help;
                     self.window_open = true;
                 }
                 UiCommand::SetStatus(msg) => {
@@ -331,10 +332,17 @@ impl QuickActionsApp {
 
         match entries {
             None => {
-                ui.label(format!("No hay historial. Pulsa {m}+V para cargarlo."));
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Sin historial todavia. Pulsa {m}+V para cargarlo."
+                    ))
+                    .color(theme::TEXT_DIM),
+                );
             }
             Some(ref entries) if entries.is_empty() => {
-                ui.label("El historial esta vacio.");
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new("El historial esta vacio.").color(theme::TEXT_DIM));
             }
             Some(entries) => {
                 ui.label(format!("{} entradas:", entries.len()));
@@ -388,10 +396,55 @@ impl QuickActionsApp {
         }
     }
 
-    /// Dibuja la pestana de ayuda.
+    /// Dibuja la pestana de ayuda (U5: filas estructuradas con badges de
+    /// tecla en vez de un bloque ASCII).
     fn draw_help_tab(&self, ui: &mut egui::Ui) {
+        let mod_name = modifier_name();
+        let toggle_note = crate::hotkeys::modifier() == crate::hotkeys::Modifier::CapsLock
+            && crate::hotkeys::caps_mode() == crate::hotkeys::CapsMode::Toggle;
+
         egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.label(&self.help_text);
+            ui.add_space(6.0);
+            ui.strong("Asistente de IA");
+            ui.label(
+                egui::RichText::new("Selecciona texto en cualquier app y pulsa:")
+                    .color(theme::TEXT_DIM),
+            );
+            ui.add_space(4.0);
+            ui.separator();
+            ui.add_space(2.0);
+
+            for (_cmd, label, desc) in crate::hotkeys::HOTKEY_ACTIONS {
+                ui.horizontal(|ui| {
+                    ui.add_space(2.0);
+                    key_badge(ui, &format!("{mod_name}+{label}"));
+                    ui.add_space(4.0);
+                    ui.label(desc);
+                });
+            }
+
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(2.0);
+            ui.label(
+                egui::RichText::new(
+                    "• El resultado corregido se copia al portapapeles.\n\
+                     • Doble click en el historial copia la entrada.\n\
+                     • La pausa total y los atajos individuales se cambian en el menu\n  \
+                     del tray y en la pestana Ajustes.",
+                )
+                .color(theme::TEXT_DIM),
+            );
+            if toggle_note {
+                ui.add_space(2.0);
+                ui.label(
+                    egui::RichText::new(
+                        "⚠ CapsLock esta en modo toggle: un tap lo latchea y la\n  \
+                         proxima tecla de atajo dispara (no alterna mayusculas).",
+                    )
+                    .color(theme::ACCENT),
+                );
+            }
         });
     }
 
@@ -731,6 +784,12 @@ impl eframe::App for QuickActionsApp {
 
         ctx.set_pixels_per_point(1.3);
 
+        // U5: temal custom del app al primer frame.
+        if !self.style_applied {
+            apply_theme(ctx);
+            self.style_applied = true;
+        }
+
         // Inicializar clipboard cacheado si aun no existe.
         if self.egui_clipboard.is_none() {
             self.egui_clipboard = arboard::Clipboard::new().ok();
@@ -834,18 +893,17 @@ impl eframe::App for QuickActionsApp {
                     .with_resizable(false)
                     .with_transparent(true),
                 move |ctx, _class| {
-                    // Color de fondo segun estado
+                    // U5: pill toast con la paleta del app.
                     let bg = if is_error {
-                        egui::Color32::from_rgb(120, 20, 20) // Rojo oscuro
+                        egui::Color32::from_rgb(42, 16, 18) // rojo profundo
                     } else {
-                        egui::Color32::from_rgb(25, 25, 35) // Casi negro azulado
+                        theme::BG_ELEV
                     };
 
-                    // Borde sutil
                     let border = if is_error {
-                        egui::Color32::from_rgb(200, 80, 80)
+                        theme::ERROR
                     } else {
-                        egui::Color32::from_rgb(80, 100, 160)
+                        theme::ACCENT
                     };
 
                     // Animacion de pulso: el borde se aclara y oscila
@@ -863,6 +921,7 @@ impl eframe::App for QuickActionsApp {
                         .frame(
                             egui::Frame::none()
                                 .fill(bg)
+                                .rounding(egui::Rounding::same(10.0))
                                 .stroke(egui::Stroke::new(1.5, border_color))
                                 .inner_margin(egui::Margin {
                                     left: 16.0,
@@ -976,7 +1035,7 @@ impl eframe::App for QuickActionsApp {
                                 } else if paused {
                                     egui::Color32::from_rgb(250, 230, 190)
                                 } else {
-                                    egui::Color32::from_rgb(210, 225, 250)
+                                    theme::TEXT
                                 };
                                 ui.label(
                                     egui::RichText::new(&status)
@@ -1002,6 +1061,97 @@ impl eframe::App for QuickActionsApp {
         let repaint_ms = if needs_repaint { 30 } else { 5000 };
         ctx.request_repaint_after(std::time::Duration::from_millis(repaint_ms));
     }
+}
+
+/// U5: paleta de la marca (navy + ambar, familia del icono del tray).
+pub mod theme {
+    use egui::Color32;
+
+    /// Fondo principal de la ventana.
+    pub const BG_PANEL: Color32 = Color32::from_rgb(13, 19, 33);
+    /// Fondo de panales/areas elevadas (toast, popups).
+    pub const BG_ELEV: Color32 = Color32::from_rgb(19, 28, 48);
+    /// Fondo extreme (inputs).
+    pub const BG_INPUT: Color32 = Color32::from_rgb(10, 16, 28);
+    /// Fondo de widgets (botones/checkbox base).
+    pub const BG_WIDGET: Color32 = Color32::from_rgb(22, 31, 53);
+    /// Fondo de widget con hover.
+    pub const BG_WIDGET_HOVER: Color32 = Color32::from_rgb(29, 43, 78);
+    /// Acento ambar (mismo familias que el icono tray).
+    pub const ACCENT: Color32 = Color32::from_rgb(255, 201, 60);
+    /// Texto primario.
+    pub const TEXT: Color32 = Color32::from_rgb(232, 230, 227);
+    /// Texto secundario.
+    pub const TEXT_DIM: Color32 = Color32::from_rgb(154, 164, 178);
+    /// Linea/borde sutil.
+    pub const STROKE: Color32 = Color32::from_rgb(58, 69, 96);
+    /// Error (icono/fondo).
+    pub const ERROR: Color32 = Color32::from_rgb(200, 80, 80);
+}
+
+/// U5: aplica el tema visual del app (dark navy + acento ambar) una vez.
+fn apply_theme(ctx: &egui::Context) {
+    use egui::{Color32, Shadow, Stroke, Vec2};
+
+    ctx.style_mut(|style| {
+        let v = &mut style.visuals;
+        v.panel_fill = theme::BG_PANEL;
+        v.window_fill = theme::BG_ELEV;
+        v.extreme_bg_color = theme::BG_INPUT;
+        v.window_stroke = Stroke::new(1.0, theme::STROKE);
+        v.window_shadow = Shadow {
+            offset: Vec2::new(0.0, 5.0),
+            blur: 22.0,
+            spread: 2.0,
+            color: Color32::from_black_alpha(140),
+        };
+        v.selection.bg_fill = Color32::from_rgba_premultiplied(255, 201, 60, 70);
+        v.selection.stroke = Stroke::new(1.0, theme::ACCENT);
+
+        // Rounding global.
+        v.window_rounding = 8.0.into();
+        v.menu_rounding = 6.0.into();
+        for w in [
+            &mut v.widgets.noninteractive,
+            &mut v.widgets.inactive,
+            &mut v.widgets.hovered,
+            &mut v.widgets.active,
+            &mut v.widgets.open,
+        ] {
+            w.rounding = egui::Rounding::same(6.0);
+            w.fg_stroke.color = theme::TEXT;
+        }
+        v.widgets.inactive.bg_fill = theme::BG_WIDGET;
+        v.widgets.inactive.weak_bg_fill = theme::BG_WIDGET;
+        v.widgets.hovered.bg_fill = theme::BG_WIDGET_HOVER;
+        v.widgets.hovered.weak_bg_fill = theme::BG_WIDGET_HOVER;
+        v.widgets.active.bg_fill = Color32::from_rgb(42, 62, 110);
+        v.widgets.active.weak_bg_fill = Color32::from_rgb(42, 62, 110);
+        v.widgets.active.fg_stroke.color = theme::ACCENT;
+        v.widgets.hovered.bg_stroke = Stroke::new(1.0, theme::STROKE);
+
+        // Texto.
+        v.override_text_color = Some(theme::TEXT);
+        // Fondo de text edits etc.
+        v.extreme_bg_color = theme::BG_INPUT;
+    });
+}
+
+/// U5: badge de tecla para la pantalla de ayuda (chip redondeado).
+fn key_badge(ui: &mut egui::Ui, text: &str) {
+    egui::Frame::none()
+        .fill(theme::BG_WIDGET_HOVER)
+        .rounding(egui::Rounding::same(5.0))
+        .inner_margin(egui::Margin::symmetric(8.0, 2.0))
+        .stroke(egui::Stroke::new(1.0, theme::STROKE))
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(text)
+                    .monospace()
+                    .color(theme::ACCENT)
+                    .size(13.0),
+            );
+        });
 }
 
 /// Nombre legible del modificador configurado (para textos e igui).

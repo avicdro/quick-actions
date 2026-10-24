@@ -27,12 +27,13 @@
   - Persistencia on-change via `write_config_key` + update del `RwLock<Config>` (efecto vivo)
   - `QuickActionsApp::new` recibe cache de modelos (`Arc<RwLock<Vec<String>>>`) y path del config
   - Extra: el click "Configuración" del tray ya NO abre el editor — manda `UiCommand::ShowAjustes` y abre la pestaña (el notepad queda tras "Abrir config.toml (avanzado)")
-- [ ] **U5 — Refresh visual (egui)**:
+- [x] **U5 — Refresh visual (egui)**:
   - Tema custom: navy oscuro (#0D1321/#121B2E) + accent ámbar #FFC93C (same family que el icono tray), rounding, selection, hover
   - Toast: pill con shadow + radius
   - Ayuda estructurada (badges de teclas en vez de ASCII art)
   - Espaciados en Resultado/Historial; textos vacíos con icono/tono
   - NOTA: el titlebar rojo es el accent de Windows del usuario, no del app
+  - Implementado: `theme` module (paleta nominal), `apply_theme` una vez (`style_applied`), toast `BG_ELEV`+borde ámbar pulsante+rounding 10, `key_badge` chip, help reescrito con filas `{mod}+{key}` antes de nota toggles, historial vacío tintado dim, window_shadow bonito. `ShowHelp` queda por compatibilidad (el payload ya no se muestra)
 
 ## Registro
 
@@ -42,3 +43,4 @@
 | 2026-10-24 | U1 | — | `ToastKind` (Notice 3.5s / Error 6s / Loading sin expiry) + icono por clase |
 | 2026-10-24 | U3 | — | 6 bools en `[hotkeys]` + guard en dispatch + submenu tray (ids 1201–1208) + config.instalada parcheada |
 | 2026-10-24 | U4 | — | Tab::Ajustes (Ollama/Hotkeys/App, persistencia on-change); tray "Configuración" repuntado a `ShowAjustes`; `write_config_key` publicada; tray~`request_models_refresh()` pub |
+| 2026-10-24 | U5 | — | tema navy+ámbar (`theme`/`apply_theme`), toast pill, help con `key_badge`s, dims vacíos; `help_text` field eliminado (help estructurado) |
