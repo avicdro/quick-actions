@@ -6,6 +6,21 @@
 
 ## Ítems
 
+### Ronda 2 (feedback post-test 2)
+
+- [x] **V1 — GUI a11y + estética** (contraste, tipografías, separación):
+  - `text_styles`: body 15, button 14.5, heading 19, small 12, monospace 13
+  - spacing: item_spacing (10,8), button_padding (14,7), iconos más grandes
+  - Tabs como pills más grandes (15px strong)
+  - Cards: secciones de Ajustes en Frames con card bg + rounded 10 + título ámbar 16.5; Grid de 2 columnas para label↔campo
+  - Checkmark de checkboxes en ámbar (estados activo/hover)
+- [x] **V2 — Ventana real de Windows (Alt-Tab)**:
+  - Quitar `with_taskbar(false)` del viewport principal (el toast lo conserva)
+  - Al estar visible participa en taskbar + Alt-Tab; al ocultarse desaparece (ventana invisible)
+  - Extra: min inner size 480x420 (antes 400x300)
+
+### Ronda 1
+
 - [x] **U1 — Toasts transitorios** (auto-hide):
   - `ToastKind` en `ui_protocol.rs` (cross, con tests): `Loading` (`msg` termina en `...`, sin expiry), `Notice` (3.5s), `Error` (empieza con "Error", 6s)
   - `ui.rs`: `toast_expiry: Option<Instant>`; `SetStatus(msg)` y `SetPaused(true)` fijan expiry; `update()` chequea y cierra (el path `toast_was_visible` ya cierra el viewport)
@@ -44,3 +59,5 @@
 | 2026-10-24 | U3 | — | 6 bools en `[hotkeys]` + guard en dispatch + submenu tray (ids 1201–1208) + config.instalada parcheada |
 | 2026-10-24 | U4 | — | Tab::Ajustes (Ollama/Hotkeys/App, persistencia on-change); tray "Configuración" repuntado a `ShowAjustes`; `write_config_key` publicada; tray~`request_models_refresh()` pub |
 | 2026-10-24 | U5 | — | tema navy+ámbar (`theme`/`apply_theme`), toast pill, help con `key_badge`s, dims vacíos; `help_text` field eliminado (help estructurado) |
+| 2026-10-25 | V2 | — | `with_taskbar(false)` fuera del viewport principal → taskbar + Alt-Tab mientras visible; min size 480x420 |
+| 2026-10-25 | V1 | — | text_styles 15/14.5/18.5, spacing (10,8)+button_padding(14,7)+icons 22, `TEXT_DIM` aclarado (#BAC3D2), tabs pill strong+accent, cards de Ajustes (`settings_card` + Grid 2 col), checkmarks fg ámbar en hover/activo |
