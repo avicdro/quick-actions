@@ -1,7 +1,7 @@
 use std::sync::{mpsc::Sender, OnceLock};
 
 /// Comandos que pueden enviarse desde el hook de teclado al thread principal.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HotkeyCommand {
     /// Corregir ortografia de la seleccion actual.
     Correct,
@@ -15,6 +15,81 @@ pub enum HotkeyCommand {
     ShowHistory,
     /// Mostrar ventana de ayuda.
     ShowHelp,
+}
+
+impl HotkeyCommand {
+    /// Etiqueta visible de la tecla del atajo (para toasts y menus).
+    #[must_use]
+    pub fn key_label(self) -> &'static str {
+        match self {
+            Self::Correct => "G",
+            Self::Translate => "T",
+            Self::Summarize => "R",
+            Self::Generate => "Enter",
+            Self::ShowHistory => "V",
+            Self::ShowHelp => "H",
+        }
+    }
+
+    /// Nombre del campo en `[hotkeys]` que activa/desactiva este atajo
+    /// (pausa modular U3).
+    #[must_use]
+    pub fn config_field(self) -> &'static str {
+        match self {
+            Self::Correct => "correct",
+            Self::Translate => "translate",
+            Self::Summarize => "summarize",
+            Self::Generate => "generate",
+            Self::ShowHistory => "history",
+            Self::ShowHelp => "help",
+        }
+    }
+}
+
+/// U3: lista estable de atajos para recorrer en menus y ajustes (orden del
+/// enum: (comando, etiqueta de tecla, descripcion)).
+pub const HOTKEY_ACTIONS: [(HotkeyCommand, &str, &str); 6] = [
+    (HotkeyCommand::Correct, "G", "Corregir seleccion"),
+    (HotkeyCommand::Translate, "T", "Traducir seleccion"),
+    (HotkeyCommand::Summarize, "R", "Resumir seleccion"),
+    (HotkeyCommand::Generate, "Enter", "Generar respuesta"),
+    (HotkeyCommand::ShowHistory, "V", "Historial"),
+    (HotkeyCommand::ShowHelp, "H", "Ayuda"),
+];
+
+/// Ley o escribe el interruptor per-atajo correspondiente en la config.
+pub fn hotkey_switch(cmd: HotkeyCommand, cfg: &mut crate::config::HotkeysConfig) -> &mut bool {
+    match cmd.config_field() {
+        "correct" => &mut cfg.correct,
+        "translate" => &mut cfg.translate,
+        "summarize" => &mut cfg.summarize,
+        "generate" => &mut cfg.generate,
+        "history" => &mut cfg.history,
+        _ => &mut cfg.help,
+    }
+}
+
+/// U3: un atajo concreto esta habilitado?
+#[must_use]
+pub fn is_hotkey_enabled(cmd: HotkeyCommand, cfg: &crate::config::HotkeysConfig) -> bool {
+    match cmd.config_field() {
+        "correct" => cfg.correct,
+        "translate" => cfg.translate,
+        "summarize" => cfg.summarize,
+        "generate" => cfg.generate,
+        "history" => cfg.history,
+        _ => cfg.help,
+    }
+}
+
+/// Nombre legible del modificador configurado ("CapsLock" / "Alt") para
+/// textos, toasts y menus.
+#[must_use]
+pub fn modifier_name() -> &'static str {
+    match modifier() {
+        Modifier::CapsLock => "CapsLock",
+        Modifier::Alt => "Alt",
+    }
 }
 
 /// Tecla modificadora de los atajos.
@@ -147,5 +222,40 @@ mod tests {
         assert_eq!(CapsMode::from_config("TOGGLE "), CapsMode::Toggle);
         assert_eq!(CapsMode::from_config("alt"), CapsMode::Hold);
         assert_eq!(CapsMode::from_config(""), CapsMode::Hold);
+    }
+
+    #[test]
+    fn hotkey_switches_roundtrip() {
+        use crate::config::HotkeysConfig;
+
+        // U3: valores por defecto todos activos.
+        let mut cfg = HotkeysConfig::default();
+        for (cmd, _, _) in HOTKEY_ACTIONS {
+            assert!(is_hotkey_enabled(cmd, &cfg), "{:?}", cmd);
+        }
+
+        // Toggle ida y vuelta por config_field.
+        for (cmd, _, _) in HOTKEY_ACTIONS {
+            *hotkey_switch(cmd, &mut cfg) = !is_hotkey_enabled(cmd, &cfg);
+        }
+        for (cmd, _, _) in HOTKEY_ACTIONS {
+            assert!(!is_hotkey_enabled(cmd, &cfg), "{:?}", cmd);
+        }
+
+        // Cada campo mapea a un TOML key distinto.
+        let fields: std::collections::HashSet<_> = HOTKEY_ACTIONS
+            .iter()
+            .map(|(c, _, _)| c.config_field())
+            .collect();
+        assert_eq!(fields.len(), 6);
+    }
+
+    #[test]
+    fn hotkey_labels_match_fields() {
+        for (cmd, label, _) in HOTKEY_ACTIONS {
+            assert!(!label.is_empty());
+            assert!(!cmd.key_label().is_empty());
+            assert_eq!(label, cmd.key_label());
+        }
     }
 }

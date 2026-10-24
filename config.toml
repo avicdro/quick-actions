@@ -26,6 +26,15 @@ modifier = "alt"
 #              alterna mayusculas nativamente.
 capsmode = "hold"
 
+# Pausa modular: false desactiva un atajo concreto sin tocar el resto
+# (tambien desde el menu del tray o la pestana Ajustes).
+correct = true
+translate = true
+summarize = true
+generate = true
+history = true
+help = true
+
 [app]
 # Iniciar automaticamente con Windows (HKCU\...\Run).
 # Solo define el estado inicial; cuando lo toggles desde el tray, el

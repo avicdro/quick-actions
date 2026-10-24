@@ -70,6 +70,20 @@ pub fn handle_command(
         .ok()
         .map(|c| c.clone())
         .ok_or_else(|| AppError::msg("Error de lock en config (poisoned)"))?;
+
+    // U3, pausa modular: atajo individualmente desactivado en la config.
+    // La pausa total ([hotkeys] enabled / tray) se resuelve antes en el hook.
+    if !crate::hotkeys::is_hotkey_enabled(cmd, &config.hotkeys) {
+        let msg = format!(
+            "Atajo '{}+{}' desactivado (Ajustes)",
+            crate::hotkeys::modifier_name(),
+            cmd.key_label()
+        );
+        let _ = ui_tx.send(UiCommand::SetStatus(msg));
+        ui::request_repaint();
+        return Ok(());
+    }
+
     let ollama = OllamaClient::new(config.ollama.clone());
     let result = match cmd {
         HotkeyCommand::Correct => handle_correct(clipboard, history, ui_tx, ollama),

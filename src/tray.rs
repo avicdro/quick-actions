@@ -16,10 +16,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW,
     GetCursorPos, GetMessageW, LoadIconW, LoadImageW, PostQuitMessage, RegisterClassExW,
     SetForegroundWindow, ShowWindow, TrackPopupMenu, TranslateMessage, HICON, IDC_ARROW,
-    IDI_APPLICATION, IMAGE_ICON, LR_DEFAULTSIZE, LR_SHARED, MF_CHECKED, MF_STRING, MSG, SW_HIDE,
-    TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TRACK_POPUP_MENU_FLAGS,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WM_COMMAND, WM_DESTROY, WM_LBUTTONUP, WM_QUIT, WM_RBUTTONUP,
-    WM_USER, WNDCLASSEXW,
+    IDI_APPLICATION, IMAGE_ICON, LR_DEFAULTSIZE, LR_SHARED, MF_CHECKED, MF_SEPARATOR, MF_STRING,
+    MSG, SW_HIDE, TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+    TRACK_POPUP_MENU_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE, WM_COMMAND, WM_DESTROY, WM_LBUTTONUP,
+    WM_QUIT, WM_RBUTTONUP, WM_USER, WNDCLASSEXW,
 };
 
 use crate::ui::UiCommand;
@@ -34,6 +34,24 @@ const ID_TRAY_PAUSE: u32 = 1005;
 const ID_MODELO_BASE: u32 = 2100;
 const MAX_MODELOS_MENU: usize = 15;
 
+/// Primer ID del submenu de atajos (U3): items en ID_ATAJOS_BASE+1..=+6,
+/// uno por `HOTKEY_ACTIONS` en orden.
+const ID_ATAJOS_BASE: u32 = 1200;
+/// Submenu atajos: "Activar todos".
+const ID_ATAJOS_TODOS: u32 = 1207;
+/// Submenu atajos: "Desactivar todos".
+const ID_ATAJOS_NINGUNO: u32 = 1208;
+
+/// Indice de `HOTKEY_ACTIONS` para un id del submenu de atajos (None para
+/// todos/ninguno/invalidos).
+fn atajo_index_for_id(id: u32) -> Option<usize> {
+    let off = id.checked_sub(ID_ATAJOS_BASE)?;
+    match off {
+        1..=6 => Some((off - 1) as usize),
+        _ => None,
+    }
+}
+
 /// Datos globales del tray icon (solo hay una instancia).
 struct TrayData {
     ui_tx: Sender<UiCommand>,
@@ -46,6 +64,66 @@ struct TrayData {
 }
 
 static TRAY_DATA: OnceLock<TrayData> = OnceLock::new();
+
+/// Actions del submenu de atajos (U3): toggle individual o all-or-none.
+///
+/// Persiste en `[hotkeys]` via toml_edit y aplica en el `RwLock` compartido
+/// para efecto inmediato (sin reinicio). Feedback con toast Notice.
+fn handle_atajos_menu(id: u32) {
+    let Some(data) = TRAY_DATA.get() else { return };
+    let hk_now = data.config.read().ok().map(|c| c.hotkeys.clone());
+    let Some(hk_now) = hk_now else { return };
+
+    let changes: Vec<(crate::hotkeys::HotkeyCommand, bool)> = if id == ID_ATAJOS_TODOS {
+        crate::hotkeys::HOTKEY_ACTIONS
+            .iter()
+            .map(|(cmd, _, _)| (*cmd, true))
+            .collect()
+    } else if id == ID_ATAJOS_NINGUNO {
+        crate::hotkeys::HOTKEY_ACTIONS
+            .iter()
+            .map(|(cmd, _, _)| (*cmd, false))
+            .collect()
+    } else if let Some(idx) = atajo_index_for_id(id) {
+        let (cmd, _, _) = crate::hotkeys::HOTKEY_ACTIONS[idx];
+        vec![(cmd, !crate::hotkeys::is_hotkey_enabled(cmd, &hk_now))]
+    } else {
+        return;
+    };
+
+    // Persistir y aplicar; el primer fallo corta el resto.
+    for (cmd, on) in &changes {
+        if let Err(e) =
+            crate::config::Config::write_hotkey(&data.config_path, cmd.config_field(), *on)
+        {
+            tracing::warn!("No se pudo persistir [hotkeys] {}: {e}", cmd.config_field());
+            let msg = format!("Error: ajuste '{}' no guardado", cmd.config_field());
+            let _ = data.ui_tx.send(UiCommand::SetStatus(msg));
+            crate::ui::request_repaint();
+            return;
+        }
+        if let Ok(mut c) = data.config.write() {
+            *crate::hotkeys::hotkey_switch(*cmd, &mut c.hotkeys) = *on;
+        }
+    }
+
+    // Toast: cambido unico -> detalle; all-or-none -> resumen.
+    let msg = if changes.len() == 1 {
+        let (cmd, on) = changes[0];
+        format!(
+            "Atajo '{}+{}' {}",
+            crate::hotkeys::modifier_name(),
+            cmd.key_label(),
+            if on { "activado" } else { "desactivado" }
+        )
+    } else {
+        let on_count = changes.iter().filter(|(_, on)| *on).count();
+        format!("Atajos: {on_count}/{} activados", changes.len())
+    };
+    let _ = data.ui_tx.send(UiCommand::SetStatus(msg));
+    crate::ui::request_repaint();
+    tracing::info!("Menu atajos: {} cambio(s) aplicado(s).", changes.len());
+}
 
 /// Toggle pausa de atajos (compartido por WM_COMMAND y TPM_RETURNCMD).
 /// Alterna el flag compartido y avisa al UI (toast persistente).
@@ -349,6 +427,9 @@ extern "system" fn tray_wnd_proc(
                             refresh_models();
                         }
                     }
+                    id if (ID_ATAJOS_BASE + 1..=ID_ATAJOS_NINGUNO).contains(&id) => {
+                        handle_atajos_menu(id);
+                    }
                     ID_TRAY_EXIT => {
                         tracing::info!("Saliendo via tray menu...");
                         PostQuitMessage(0);
@@ -413,6 +494,60 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         ID_TRAY_PAUSE as usize,
         windows::core::w!("Pausar atajos"),
     );
+
+    // === Submenu "Atajos" (U3, pausa modular per-atajo) ===
+    let hotkeys_cfg = TRAY_DATA
+        .get()
+        .and_then(|d| d.config.read().ok().map(|c| c.hotkeys.clone()));
+
+    match CreatePopupMenu() {
+        Err(_) => {
+            tracing::warn!("CreatePopupMenu fallo para el submenu de atajos.");
+        }
+        Ok(hmenu_atajos) => {
+            if let Some(hk) = hotkeys_cfg {
+                for (i, (cmd, label, desc)) in crate::hotkeys::HOTKEY_ACTIONS.iter().enumerate() {
+                    let on = crate::hotkeys::is_hotkey_enabled(*cmd, &hk);
+                    let flags = if on {
+                        windows::Win32::UI::WindowsAndMessaging::MENU_ITEM_FLAGS(
+                            MF_STRING.0 | MF_CHECKED.0,
+                        )
+                    } else {
+                        MF_STRING
+                    };
+                    let text = windows::core::HSTRING::from(format!("{desc} ({label})"));
+                    let _ = AppendMenuW(
+                        hmenu_atajos,
+                        flags,
+                        (ID_ATAJOS_BASE + 1 + i as u32) as usize,
+                        &text,
+                    );
+                }
+                let _ = AppendMenuW(hmenu_atajos, MF_SEPARATOR, 0, windows::core::w!(""));
+                let _ = AppendMenuW(
+                    hmenu_atajos,
+                    MF_STRING,
+                    ID_ATAJOS_TODOS as usize,
+                    windows::core::w!("Activar todos"),
+                );
+                let _ = AppendMenuW(
+                    hmenu_atajos,
+                    MF_STRING,
+                    ID_ATAJOS_NINGUNO as usize,
+                    windows::core::w!("Desactivar todos"),
+                );
+            }
+
+            let _ = AppendMenuW(
+                hmenu,
+                windows::Win32::UI::WindowsAndMessaging::MENU_ITEM_FLAGS(
+                    MF_STRING.0 | windows::Win32::UI::WindowsAndMessaging::MF_POPUP.0,
+                ),
+                hmenu_atajos.0 as usize, // MF_POPUP: uidNew = HMENU del submenu
+                windows::core::w!("Atajos"),
+            );
+        }
+    }
 
     // === Submenu "Modelo" (P3) ===
     let current_model = TRAY_DATA
@@ -537,6 +672,9 @@ unsafe fn show_tray_menu(hwnd: HWND) {
                 set_ollama_model(model);
                 refresh_models();
             }
+        }
+        id if (ID_ATAJOS_BASE + 1..=ID_ATAJOS_NINGUNO).contains(&id) => {
+            handle_atajos_menu(id);
         }
         ID_TRAY_EXIT => {
             tracing::info!("Saliendo via tray menu...");

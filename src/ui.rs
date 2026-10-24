@@ -679,10 +679,7 @@ impl eframe::App for QuickActionsApp {
 
 /// Nombre legible del modificador configurado (para textos e igui).
 fn modifier_name() -> &'static str {
-    match crate::hotkeys::modifier() {
-        crate::hotkeys::Modifier::CapsLock => "CapsLock",
-        crate::hotkeys::Modifier::Alt => "Alt",
-    }
+    crate::hotkeys::modifier_name()
 }
 
 /// Abre una URL en el navegador por defecto de Windows.

@@ -84,6 +84,14 @@ pub struct HotkeysConfig {
     /// descapacita — CapsLock ya no alterna mayusculas nativamente).
     /// Solo aplica con modifier capslock.
     pub capsmode: String,
+    /// U3, pausa modular: interruptor por atajo. `false` desactiva solo
+    /// esa accion (la pausa total de P2, `enabled`, tiene prioridad).
+    pub correct: bool,
+    pub translate: bool,
+    pub summarize: bool,
+    pub generate: bool,
+    pub history: bool,
+    pub help: bool,
 }
 
 impl Default for HotkeysConfig {
@@ -94,6 +102,13 @@ impl Default for HotkeysConfig {
             // defecto; CapsLock+hold/toggle queda disponible por config.
             modifier: "alt".to_string(),
             capsmode: "hold".to_string(),
+            // U3: todos los atajos habilitados por defecto.
+            correct: true,
+            translate: true,
+            summarize: true,
+            generate: true,
+            history: true,
+            help: true,
         }
     }
 }
@@ -218,6 +233,15 @@ enabled = true
 modifier = "alt"        # "alt" (default) o "capslock"
 capsmode = "hold"       # solo capslock: "hold" (mantener) o "toggle" (latched)
 
+# Pausa modular (U3): false desactiva un atajo concreto sin tocar el resto.
+# La pausa total ([hotkeys] enabled o el menu del tray) tiene prioridad.
+correct = true
+translate = true
+summarize = true
+generate = true
+history = true
+help = true
+
 [app]
 autostart = false
 check_updates = true
@@ -246,6 +270,16 @@ enabled = false
     /// invalido (en ese caso no modifica nada).
     pub fn write_autostart(path: &Path, enabled: bool) -> Result<()> {
         Self::write_config_key(path, "app", "autostart", enabled)
+    }
+
+    /// Actualiza `[hotkeys] <campo>` en `config.toml` (pausa modular U3,
+    /// `field` = "correct"/"translate"/...).
+    ///
+    /// # Errors
+    ///
+    /// Si falla leer/escribir o el TOML es invalido.
+    pub fn write_hotkey(path: &Path, field: &str, enabled: bool) -> Result<()> {
+        Self::write_config_key(path, "hotkeys", field, enabled)
     }
 
     /// Actualiza `[ollama] model` en `config.toml` (misma semantica que

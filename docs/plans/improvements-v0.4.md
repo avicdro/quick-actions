@@ -16,7 +16,7 @@
   - Log de arranque de main.rs → genérico (no "CapsLock+")
   - README: tabla de atajos `Alt+`, config example con `modifier = "alt"` (CapsLock queda documentado como opción)
   - P7 sigue íntegro: capslock+hold/toggle disponible por config
-- [ ] **U3 — Pausa modular por atajo**:
+- [x] **U3 — Pausa modular por atajo**:
   - `HotkeysConfig`: bools `correct/translate/summarize/generate/history/help` (default true)
   - `HotkeyCommand::key_label() + config_field()` (cross, tests)
   - Dispatch: `actions::handle_command` lee flag del snapshot y corta con toast Notice "Atajo '{key}' desactivado (Ajustes)"
@@ -39,3 +39,4 @@
 |-------|------|--------|-------|
 | 2026-10-24 | U2 | — | default `modifier="alt"` en config.rs/config.toml/README + config instalada; log de arranque genérico |
 | 2026-10-24 | U1 | — | `ToastKind` (Notice 3.5s / Error 6s / Loading sin expiry) + icono por clase |
+| 2026-10-24 | U3 | — | 6 bools en `[hotkeys]` + guard en dispatch + submenu tray (ids 1201–1208) + config.instalada parcheada |
