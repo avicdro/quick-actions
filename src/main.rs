@@ -196,9 +196,10 @@ fn windows_main() {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1.0, 1.0])
-            .with_min_inner_size([400.0, 300.0])
+            .with_min_inner_size([480.0, 420.0])
             .with_position([-10000.0, -10000.0])
-            .with_taskbar(false)
+            // V2: SIN with_taskbar(false) — la ventana, cuando esta visible,
+            // es una ventana estandar de Windows (taskbar + Alt-Tab).
             .with_visible(false),
         ..Default::default()
     };
