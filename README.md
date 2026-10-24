@@ -15,16 +15,18 @@ Suite de atajos globales para IA y productividad en **Windows**, escrita en **Ru
 - 🥥 **System tray icon** con icono propio embebido en el exe (`.ico`, menú completo: ayuda/config/autostart/pausa/modelo)
 - ⚙️ **Config externa** `config.toml` — edita sin recompilar
 
-## ⌨️ Atajos (todas usan CapsLock como modificador)
+## ⌨️ Atajos (modificador configurable — default `Alt`)
 
 | Atajo | Acción |
 |-------|--------|
-| `CapsLock + G` | Corregir la selección → pega el resultado corregido |
-| `CapsLock + T` | Traducir la selección → ventana con resultado |
-| `CapsLock + R` | Resumir la selección → ventana con resultado |
-| `CapsLock + Enter` | Generar respuesta a partir de la selección |
-| `CapsLock + V` | Historial de correcciones (doble click = copiar) |
-| `CapsLock + H` | Ayuda |
+| `Alt + G` | Corregir la selección → pega el resultado corregido |
+| `Alt + T` | Traducir la selección → ventana con resultado |
+| `Alt + R` | Resumir la selección → ventana con resultado |
+| `Alt + Enter` | Generar respuesta a partir de la selección |
+| `Alt + V` | Historial de correcciones (doble click = copiar) |
+| `Alt + H` | Ayuda |
+
+> Modificador alternativo: `modifier = "capslock"` en `[hotkeys]` (con sub-modo `hold` o `toggle` — ver config). En modo toggle CapsLock deja de alternar mayúsculas.
 
 > Tip: puedes añadir contexto extra a la corrección encerrando texto entre corchetes `[contexto]`.
 
@@ -56,10 +58,7 @@ Coloca `config.toml` junto al `.exe`:
 ```toml
 [hotkeys]
 enabled = true
-modifier = "capslock"   # "capslock" (default) o "alt"
-capsmode = "hold"       # "hold": mantener presionado + tecla
-                        # "toggle": tap latched; la proxima tecla lo dispara
-                        #  (en toggle CapsLock ya no alterna mayusculas)
+modifier = "alt"        # "alt" (default) o "capslock" (+ capsmode hold/toggle)
 
 [ollama]
 model = "gemma4:cloud"                          # Modelo a usar

@@ -90,7 +90,9 @@ impl Default for HotkeysConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            modifier: "capslock".to_string(),
+            // Preferencia del usuario (v0.4/U2): Alt como modificador por
+            // defecto; CapsLock+hold/toggle queda disponible por config.
+            modifier: "alt".to_string(),
             capsmode: "hold".to_string(),
         }
     }
@@ -213,8 +215,8 @@ history_max_entries = 50
 
 #[hotkeys]
 enabled = true
-modifier = "capslock"   # "capslock" o "alt"
-capsmode = "hold"       # "hold" (mantener) o "toggle" (tap queda latched)
+modifier = "alt"        # "alt" (default) o "capslock"
+capsmode = "hold"       # solo capslock: "hold" (mantener) o "toggle" (latched)
 
 [app]
 autostart = false
@@ -313,8 +315,8 @@ mod tests {
         assert_eq!(c.ollama.model, "gemma4:cloud");
         assert_eq!(c.ui.font_size, 16);
         assert!(c.hotkeys.enabled);
-        // P7
-        assert_eq!(c.hotkeys.modifier, "capslock");
+        // P7 + U2 (default del usuario: Alt)
+        assert_eq!(c.hotkeys.modifier, "alt");
         assert_eq!(c.hotkeys.capsmode, "hold");
         // P1/P4
         assert!(!c.app.autostart);

@@ -174,7 +174,10 @@ fn windows_main() {
         quick_actions::hotkeys::CapsMode::from_config(&hk_cfg.capsmode),
     );
     start_listener();
-    tracing::info!("Hotkeys iniciados. CapsLock+G/T/R/Enter/V/H listos.");
+    tracing::info!(
+        "Hotkeys iniciados. Modificador '{}' + G/T/R/Enter/V/H listos.",
+        hk_cfg.modifier
+    );
 
     // === 7. Iniciar eframe en el thread principal (requerido por Windows) ===
     // Pasamos el hotkey_rx y los datos compartidos al App.
