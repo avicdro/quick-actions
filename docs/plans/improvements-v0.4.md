@@ -19,6 +19,16 @@
   - Al estar visible participa en taskbar + Alt-Tab; al ocultarse desaparece (ventana invisible)
   - Extra: min inner size 480x420 (antes 400x300)
 
+### Ronda 3 (feedback post-V1/V2)
+
+- [x] **V3 — Contraste tab activa + scroll completo**:
+  - Tab activa: texto oscuro sobre el chip ámbar (ahora ámbar-sobre-ámbar es invisible)
+  - ScrollArea de Ajustes: reservar la altura de la fila de botones (`max_height = available - buttons_h 46px`) para que el scroll llegue hasta abajo y los botones nunca se corten
+- [x] **V4 — Semantica tray-app al cerrar**:
+  - X / Alt-F4 → ocultar de verdad con `ViewportCommand::Visible(false)` (hoy solo se mueve a -10000 y queda en la taskbar)
+  - Al abrirse (tray/atajos) ya se comporta como ventana normal (V2)
+  - OJO a testear: los toasts usan un viewport independiente; si al estar el principal oculto deja de verse un toast, reportar (fallback: window separada con WS_EX_TOOLWINDOW)
+
 ### Ronda 1
 
 - [x] **U1 — Toasts transitorios** (auto-hide):
@@ -61,3 +71,5 @@
 | 2026-10-24 | U5 | — | tema navy+ámbar (`theme`/`apply_theme`), toast pill, help con `key_badge`s, dims vacíos; `help_text` field eliminado (help estructurado) |
 | 2026-10-25 | V2 | — | `with_taskbar(false)` fuera del viewport principal → taskbar + Alt-Tab mientras visible; min size 480x420 |
 | 2026-10-25 | V1 | — | text_styles 15/14.5/18.5, spacing (10,8)+button_padding(14,7)+icons 22, `TEXT_DIM` aclarado (#BAC3D2), tabs pill strong+accent, cards de Ajustes (`settings_card` + Grid 2 col), checkmarks fg ámbar en hover/activo |
+| 2026-10-25 | V3 | — | tab activa texto oscuro sobre chip ámbar; ScrollArea con `max_height(available-46)` reserva fila de botones |
+| 2026-10-25 | V4 | — | X/Alt-F4 → `Visible(false)` real (desaparece de taskbar/Alt-Tab; queda solo el tray); mostrar vuelve a Visible(true)+focus |
