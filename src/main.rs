@@ -229,6 +229,29 @@ fn windows_main() {
     let show_on_start = std::env::args().any(|a| a == "--show");
     let app = QuickActionsApp::new(ui_channels.rx, hotkey_rx, Arc::clone(&state), show_on_start);
 
+    // I2: icono de ventana/taskbar/Alt-Tab — extraido del recurso '1 ICON'
+    // del propio exe (misma fuente unica que el tray). Sin esto, eframe
+    // pinta su icono DEFAULT (la 'e' navy de eframe) en el boton de la
+    // taskbar y en Alt-Tab.
+    let window_icon = window_icon_from_resource();
+
+    let viewport = {
+        let mut vp = eframe::egui::ViewportBuilder::default()
+            .with_inner_size([1.0, 1.0])
+            .with_min_inner_size([480.0, 420.0])
+            .with_position([-10000.0, -10000.0])
+            // V2: SIN with_taskbar(false) — la ventana, cuando esta visible,
+            // es una ventana estandar de Windows (taskbar + Alt-Tab).
+            .with_visible(false);
+        match window_icon {
+            Some(icon) => vp = vp.with_icon(icon),
+            None => {
+                tracing::warn!("I2: icono de recurso no extraible; queda el default de eframe.")
+            }
+        }
+        vp
+    };
+
     let options = eframe::NativeOptions {
         // L9: renderizador wgpu — GPU INTEGRADA (LowPower) y sin OpenGL
         // (WGL): una UI trivial no tiene nada que hacer en la dGPU, y el
@@ -242,13 +265,7 @@ fn windows_main() {
             power_preference: eframe::wgpu::PowerPreference::LowPower,
             ..Default::default()
         },
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([1.0, 1.0])
-            .with_min_inner_size([480.0, 420.0])
-            .with_position([-10000.0, -10000.0])
-            // V2: SIN with_taskbar(false) — la ventana, cuando esta visible,
-            // es una ventana estandar de Windows (taskbar + Alt-Tab).
-            .with_visible(false),
+        viewport,
         ..Default::default()
     };
 
@@ -319,5 +336,107 @@ fn show_error_dialog(msg: &str) {
             &HSTRING::from("Quick Actions — Error"),
             MB_OK | MB_ICONERROR,
         );
+    }
+}
+
+/// I2: icono RGBA de la ventana desde el recurso '1 ICON' del exe.
+///
+/// La cadena canonica del icono (S2) es: un SOLO recurso embebido ->
+/// (a) tray via LoadImageW-resource (P6), (b) ventana/taskbar/Alt-Tab
+/// via este getter + `with_icon`. Sin (b), eframe muestra su icono
+/// default (la 'e' navy) en taskbar.
+///
+/// Mecanica: `LoadImageW(id=1, 128x128, sin LR_DEFAULTSIZE)` (el
+/// LR_DEFAULTSIZE ignoraria cx/cy y usaria 32px del metrico) ->
+/// `GetIconInfo` (copia las HBITMAPs) -> `GetDIBits` 32bpp con height
+/// negativa (top-down): los iconos 32bpp llevan canal alfa recto ->
+/// swap BGRA -> RGBA (egui espera alfa NO premultiplicado, que es como
+/// viven los datos de icono).
+///
+/// Limpieza: las HBITMAPs de GetIconInfo son NUESTRAS (DeleteObject);
+/// el HICON nace con LR_SHARED (no DestroyIcon) y el DC se libera.
+#[cfg(windows)]
+fn window_icon_from_resource() -> Option<eframe::egui::IconData> {
+    use windows::Win32::Foundation::HINSTANCE;
+    use windows::Win32::Graphics::Gdi::{
+        DeleteObject, GetDC, GetDIBits, ReleaseDC, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+        DIB_RGB_COLORS, HGDIOBJ,
+    };
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetIconInfo, LoadImageW, ICONINFO, IMAGE_ICON, LR_SHARED,
+    };
+
+    const SIZE: i32 = 128; // tamano nativo del frame mayor del .ico
+
+    unsafe {
+        let hinstance = GetModuleHandleW(None).ok()?;
+        let hinstance = HINSTANCE(hinstance.0);
+        // MAKEINTRESOURCE(1): el id del recurso del build.rs.
+        let hicon_raw = LoadImageW(
+            hinstance,
+            windows::core::PCWSTR(1usize as *const u16),
+            IMAGE_ICON,
+            SIZE,
+            SIZE,
+            LR_SHARED,
+        )
+        .ok()?;
+        let hicon = windows::Win32::UI::WindowsAndMessaging::HICON(hicon_raw.0);
+
+        let mut info = ICONINFO::default();
+        GetIconInfo(hicon, &mut info).ok()?;
+        let (hbm_color, hbm_mask) = (info.hbmColor, info.hbmMask);
+        if hbm_color.0.is_null() {
+            return None;
+        }
+
+        let hdc = GetDC(None);
+        let outcome = (|| {
+            // 1a pasada: dims reales del bitmap (con lpvbits = None).
+            let mut bmi = BITMAPINFO::default();
+            bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+            if GetDIBits(hdc, info.hbmColor, 0, 0, None, &mut bmi, DIB_RGB_COLORS) == 0 {
+                return None;
+            }
+            let w = bmi.bmiHeader.biWidth.max(0);
+            let h_abs = bmi.bmiHeader.biHeight.abs();
+            if w == 0 || h_abs == 0 {
+                return None;
+            }
+
+            // 2a pasada: top-down (height negativa), 32bpp BGRA.
+            bmi.bmiHeader.biHeight = -h_abs;
+            bmi.bmiHeader.biBitCount = 32u16;
+            bmi.bmiHeader.biCompression = BI_RGB.0;
+            let mut buf = vec![0u8; (w * h_abs * 4) as usize];
+            let got = GetDIBits(
+                hdc,
+                info.hbmColor,
+                0,
+                h_abs as u32,
+                Some(buf.as_mut_ptr().cast()),
+                &mut bmi,
+                DIB_RGB_COLORS,
+            );
+            if got != h_abs {
+                return None;
+            }
+
+            // BGRA (alfa RECTO en iconos 32bpp, no premul) -> RGBA.
+            for px in buf.chunks_exact_mut(4) {
+                px.swap(0, 2);
+            }
+            Some(eframe::egui::IconData {
+                width: w as u32,
+                height: h_abs as u32,
+                rgba: buf,
+            })
+        })();
+
+        let _ = ReleaseDC(None, hdc);
+        let _ = DeleteObject(HGDIOBJ(hbm_color.0));
+        let _ = DeleteObject(HGDIOBJ(hbm_mask.0));
+        outcome
     }
 }

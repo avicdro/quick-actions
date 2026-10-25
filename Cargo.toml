@@ -1,6 +1,6 @@
 [package]
 name = "quick-actions"
-version = "0.2.6"
+version = "0.2.7"
 edition = "2021"
 authors = ["avicdro"]
 description = "Suite de atajos globales para IA y productividad (migracion AHK)"
