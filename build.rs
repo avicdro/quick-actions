@@ -14,6 +14,14 @@ use std::{env, path::PathBuf, process::Command};
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
+    // B1: build id = commit corto (GITHUB_SHA en CI, `git rev-parse` local).
+    // SIEMPRE definido (antes del early-return de abajo): lib.rs lo usa con
+    // env!() tambien en builds no-Windows (cargo test de la lib).
+    println!("cargo:rustc-env=QA_BUILD_ID={}", build_id());
+    // Rebuild cuando cambie el commit (el .git/HEAD muda con cada commit o
+    // checkout; en worktrees apunta a su propia rama).
+    println!("cargo:rerun-if-changed=.git/HEAD");
+
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os != "windows" {
         return;
@@ -58,6 +66,26 @@ fn tool(candidates: &[&str], hint: &str) -> String {
         }
     }
     panic!("No encontre {hint} (binutils mingw-w64) en PATH; necesario para embutir el icono");
+}
+
+/// B1: hash corto del commit — CI primero (GITHUB_SHA, ya truncado a 7),
+/// luego `git rev-parse --short HEAD`, y vacio si no hay repo (tarball).
+/// Un build id vacio = version sin parentesis (`v0.2.4`), nunca un env!
+/// sin definir (fallaria la compilacion).
+fn build_id() -> String {
+    if let Ok(sha) = std::env::var("GITHUB_SHA") {
+        let sha = sha.trim().to_string();
+        if !sha.is_empty() {
+            return sha.chars().take(7).collect();
+        }
+    }
+    Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default()
 }
 
 fn run(cmd: &str, args: &[&str]) {

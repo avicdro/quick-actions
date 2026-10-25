@@ -27,6 +27,34 @@ pub mod key_sim;
 #[cfg(windows)]
 pub mod self_update;
 #[cfg(windows)]
+pub mod single_instance;
+#[cfg(windows)]
 pub mod tray;
 #[cfg(windows)]
 pub mod ui;
+
+/// B1 — Version legible para log y Ajustes: `vX.Y.Z` o `vX.Y.Z (abcdef1)`
+/// cuando hay build id (commit corto de git, capturado en build.rs).
+pub fn version_string() -> String {
+    let build = env!("QA_BUILD_ID");
+    if build.is_empty() {
+        format!("v{}", env!("CARGO_PKG_VERSION"))
+    } else {
+        format!("v{} ({build})", env!("CARGO_PKG_VERSION"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::version_string;
+
+    #[test]
+    fn version_string_lleva_version_y_hash() {
+        let v = version_string();
+        assert!(v.starts_with('v'), "empieza con 'v': {v}");
+        assert!(
+            v.contains(env!("CARGO_PKG_VERSION")),
+            "lleva la version: {v}"
+        );
+    }
+}

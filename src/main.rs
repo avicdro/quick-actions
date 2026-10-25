@@ -53,14 +53,35 @@ fn windows_main() {
     let file_appender = tracing_appender::rolling::daily(&log_dir, "quick-actions.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
+    // N1: `wgpu_core::instance` loguea el ADAPTER elegido al arrancar (INFO)
+    // — ahi se ve de verdad en que GPU pinta la app (iGPU vs dGPU; el
+    // nvidia-smi de Windows NO lista procesos Vulkan/graficos y mintio en L9).
+    // El spam `Device::maintain: waiting for submission` (wgpu_core por
+    // frame, ~140k lineas/dia) se silencia con un target especifico a warn,
+    // de modo que la INFO de adapter sobrevive. RUST_LOG manda si existe
+    // (p.ej. `RUST_LOG=wgpu_core=debug` para un diagnostico profundo).
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        tracing_subscriber::EnvFilter::new("info,wgpu_core::device::resource=warn")
+    });
     tracing_subscriber::fmt()
         .with_writer(non_blocking)
         .with_ansi(false)
+        .with_env_filter(filter)
         .init();
 
     tracing::info!("========================================");
-    tracing::info!("Iniciando Quick Actions v{}", env!("CARGO_PKG_VERSION"));
+    tracing::info!(
+        "Iniciando Quick Actions {}",
+        quick_actions::version_string()
+    );
     tracing::info!("Exe dir: {:?}", exe_dir);
+
+    // === 1.5. S1: instancia unica — ANTES de tocar tray/hook/GUI/config.
+    // Si ya vive otra: enfoca su GUI (si esta abierta) y `return` — salir
+    // limpio para que el WorkerGuard del logger flusha TODO al log.
+    if !quick_actions::single_instance::acquire(&exe_dir) {
+        return;
+    }
 
     // === 2. Cargar o crear configuracion ===
     let config = match Config::load_or_create_default() {

@@ -8,9 +8,11 @@
 #         en la ventana oculta del tray (como un clic real) y dumpea.
 #   close: idem tray (abrir) + 1.5s despues WM_CLOSE sobre la ventana main
 #         (equivale a la X) y dumpea: debe volver a TOOLWINDOW offscreen.
+#   dup: S1 instancia unica — lanza A, lanza B despues; B tiene que
+#         salir solo (exit 0) en <=2s y quedar SOLO 1 proceso vivo.
 # Escribe reporte en logs\qa_<fase>.txt y captura logs\qa_<fase>.png.
 # Termina matando TODOS los quick-actions.exe (idempotente).
-param([ValidateSet("boot","show","tray","close")][string]$Phase = "boot", [int]$WaitSec = 3, [int]$CommandId = 1001, [int]$ResizeX = 0, [int]$ResizeY = 0)
+param([ValidateSet("boot","show","tray","close","dup")][string]$Phase = "boot", [int]$WaitSec = 3, [int]$CommandId = 1001, [int]$ResizeX = 0, [int]$ResizeY = 0)
 
 $ErrorActionPreference = "Continue"
 $exe   = "C:\quick-actions\quick-actions.exe"
@@ -58,6 +60,19 @@ Start-Sleep -Seconds $WaitSec
 
 $alive = -not $p.HasExited
 "proceso pid=$($p.Id) alive=$alive" | Out-File $report -Encoding utf8
+
+# Fase dup (S1): segunda instancia tiene que suicidarse al punto.
+if ($Phase -eq "dup") {
+  $p2 = Start-Process -FilePath $exe -WorkingDirectory $dir -PassThru
+  Start-Sleep -Seconds 2
+  "dup: segunda exited=$($p2.HasExited) exitcode=$($p2.ExitCode) (esperado True/0)" | Out-File $report -Append -Encoding utf8
+  $count = (Get-Process quick-actions -ErrorAction SilentlyContinue | Measure-Object).Count
+  "dup: procesos vivos=$count (esperado 1)" | Out-File $report -Append -Encoding utf8
+  Get-Process quick-actions -ErrorAction SilentlyContinue | Stop-Process -Force
+  "done" | Out-File $report -Append -Encoding utf8
+  Get-Content $report
+  return
+}
 
 if ($alive) {
   # Fase tray/close: clic simulado ("Ayuda") via WM_COMMAND en la ventana

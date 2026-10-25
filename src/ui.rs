@@ -799,6 +799,16 @@ impl QuickActionsApp {
                             ui.end_row();
                         });
 
+                    // B1: version exacta del build corriendo (tag + commit
+                    // corto de git) — saber de un vistazo si uno lleva el
+                    // fix de turno (p.ej. el caso NVIDIA).
+                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new(format!("Versión: {}", crate::version_string()))
+                            .small()
+                            .color(theme::TEXT_DIM),
+                    );
+
                     // U6: control manual del check (sin polling desde v0.2:
                     // 1 unica llamada al arrancar; de aca en mas, el usuario
                     // manda). Feedback garantizado por toast.
@@ -1218,9 +1228,14 @@ impl eframe::App for QuickActionsApp {
             self.toast_was_visible = false;
         }
 
-        // Repaint: rapido con ventana o toast (30ms), lento sin nada (5000ms).
-        let needs_repaint = self.window_open || self.toast_visible;
-        let repaint_ms = if needs_repaint { 30 } else { 5000 };
+        // Repaint: con toast animado, 30ms; sin toast, SOLO el keepalive de
+        // 5000ms para que winit siga con frames vivos (V5). El 30ms con
+        // ventana abierta de antes obligaba un render-loop continuo (~vsync)
+        // con la GUI visible: ~140k lineas de wgpu `Device::maintain` al dia
+        // en el log y la dGPU despierta a proposito. Sin toast, egui repinta
+        // solo cuando hay input/eventos (reactivo): GUI abierta + idle = 0
+        // frames, y el cursor/blink de los TextEdit pide su propio repaint.
+        let repaint_ms = if self.toast_visible { 30 } else { 5000 };
         ctx.request_repaint_after(std::time::Duration::from_millis(repaint_ms));
     }
 }

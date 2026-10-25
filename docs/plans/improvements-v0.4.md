@@ -73,6 +73,45 @@
   - `present_main_window()` al abrir: `IsIconic?SW_RESTORE` + poke `TOPMOST→NOTOPMOST` + `BringWindowToTop` + `SetForegroundWindow` best-effort — soluciona "abre detras de un juego fullscreen" (foreground lock deniega activar desde procesos de fondo; el poke de z-order la sube sin activar)
   - QA: `scripts/qa_smoke.ps1` (fases boot/show/tray/close: lanza, inyecta WM_COMMAND/WM_CLOSE reales, dumpea hwnd/estilos/rects, screenshot) y `scripts/qa_live.ps1` (sin kill, para log async) — corre desde WSL via powershell.exe; flag `--show` para abrir la GUI al arrancar sin interaccion
 
+## Ronda 5 (v0.2.4 — base y operación) — 2026-10-25
+
+- [x] **S1 — Instancia única** (mutex Windows + focus): doble clic del exe
+  ya no duplica tray/hook/update-check. `single_instance.rs`:
+  `CreateMutexW("Local\QuickActions::single-instance")` (nombre fijo, handle
+  leak por vida del proceso, fail-open si CreateMutex falla).
+  - 2ª instancia: si la GUI de la viva está abierta de verdad (visible y sin
+    TOOLWINDOW) → FocusWindowSecuencia de V6 (restore + topmost-poke +
+    SetForegroundWindow) sobre el HWND de OTRO proceso (FindWindowW por
+    título, sin filtro pid) y `exit(0)`; si está oculta en tray → exit(0)
+    silencioso (mostrarla desde fuera desincronizaría el libro egui).
+  - Raza del auto-update (U7: spawn nuevo → exit viejo ~300ms): reintentos de
+    mutex si existe `update-applied.tmp` (5s × 150ms); timeout → se borra el
+    marker para no envenenar futuros boot.
+  - QA: fase `dup` en `scripts/qa_smoke.ps1` (B debe morir en ≤2s con 1 vivo).
+- [x] **N1 — NVIDIA: diagnóstico real + spam del log**:
+  - Hallazgo (log 2026-10-25): wgpu pinta en la **RTX 3060 Ti (Vulkan,
+    DiscreteGpu)** — el equipo NO tiene iGPU usable (Win32_VideoController =
+    NVIDIA + DisplayLink USB), así que `LowPower` no tenía dónde caerse. El
+    "confirmado en nvidia-smi" de L9 era un espejismo: nvidia-smi en Windows
+    no lista procesos Vulkan/gráficos.
+  - Hallazgo 2: **~146k líneas/día** de `wgpu_core::device::resource:
+    Device::maintain: waiting for submission` — el 30ms de
+    `window_open` mantenía un render-loop continuo (~vsync) con la GUI
+    abierta.
+  - Fix: filtro de tracing con `EnvFilter` (`info` + target
+    `wgpu_core::device::resource=warn`; `RUST_LOG` manda si existe) y repaint
+    reactivo: 30ms SOLO con toast animado; sin toast, keepalive 5000ms — GUI
+    abierta + idle = 0 frames (blink/hover piden el suyo).
+  - Toast overlay NVIDIA (si persiste): no es remediado por código — ver
+    README "Solución de problemas" (purge NvBackend + lista de juegos).
+- [x] **B1 — Build id + versionado**:
+  - `build.rs`: `QA_BUILD_ID` = commit corto (GITHUB_SHA en CI / git local),
+    definido para TODOS los targets (lib.rs lo usa con env!).
+  - `version_string()` en lib.rs: `v0.2.4 (abcdef1)` — línea de arranque del
+    log + fila "Versión:" en Ajustes→App.
+  - Política (README "Versionado"): patch ilimitado post-0.2, minor para
+    hitos, 1.0.0 explícito-estable. Esta es **v0.2.4`.
+
 ## Registro
 
 | Fecha | Ítem | Commit | Notas |
@@ -93,3 +132,6 @@
 | 2026-10-25 | L9 | — | feedback visual: tab activa = SOLO borde ámbar sin relleno (scope local de selection en tabs) + texto ámbar; TextEdits con margin interior (8,6 y 10,8 en multilineas); renderer glow→wgpu Backends::PRIMARY + LowPower (iGPU) — nvidia-smi confirma que la app ya no despierta la dGPU/NVIDIA (overlay/flash negro fuera); QA: captura PrintWindow (ve la ventana aunque haya fullscreen encima) |
 | 2026-10-25 | U6 | — | updates sin polling (ya era 1 llamada al arranque; aclarado en doc): botón "Buscar actualizaciones" en Ajustes→App (`run_manual_check` con feedback SIEMPRE por toast: ShowUpdate / "estás en la última" / error); checkbox de arranque intacto |
 | 2026-10-25 | U7 | — | auto-update profesional de 1 click en el aviso (`self_update.rs`): descarga exe + SHA256SUMS.txt (release.yml lo publica ahora), verifica hash, swap por rename (exe vivo: rename OK / overwrite bloqueado), spawn nuevo + exit, arranque limpia `.prev.exe` + toast "Actualizado a vX ✓"; rollback si el swap falla |
+| 2026-10-25 | S1 | — | `single_instance.rs` (mutex `Local\` + focus cross-proceso + retry marker U7); fase `dup` en qa_smoke |
+| 2026-10-25 | N1 | — | log real del adapter (EnvFilter, RUST_LOG) + spam `Device::maintain` silenciado por target + repaint reactivo (30ms solo con toast); hallazgo: sin iGPU usable, dGPU era inevitable y nvidia-smi (Windows) no lista Vulkan |
+| 2026-10-25 | B1 | — | `build.rs` QA_BUILD_ID (GITHUB_SHA/git), `version_string()`, fila "Versión" en Ajustes, arranque del log con hash; bump 0.2.4 |
