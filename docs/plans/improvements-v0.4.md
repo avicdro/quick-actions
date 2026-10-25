@@ -28,6 +28,10 @@
   - ~~X / Alt-F4 → `Visible(false)`~~ **eigentlicher bug**: egui no reabre una viewport oculta (emilk/egui#5229/#3655) — implementado con Win32: la ventana queda offscreen 1x1 "visible" para winit (frames vivos) y se le pone/quita `WS_EX_TOOLWINDOW` (`set_toolwindow`) — sin taskbar ni Alt-Tab al cerrar; al abrir, estilo normal (+ FindWindowW+pid check para el HWND)
   - Al abrirse (tray/atajos) ya se comporta como ventana normal (V2)
   - OJO a testear: los toasts usan un viewport independiente; si al estar el principal oculto deja de verse un toast, reportar (fallback: window separada con WS_EX_TOOLWINDOW)
+- [x] **V5 — Arranque solo-tray (sin boton en taskbar)**:
+  - eframe hace `set_visible(true)` tras el PRIMER frame ignorando `with_visible(false)` (anti-flash blanco, egui PR2279) → al arrancar (autostart) quedaba boton en la barra sin ventana visible
+  - Fix: `set_toolwindow(true)` en el primer frame — la ventana nace sin boton de taskbar hasta que se abre de verdad
+  - `main_hwnd()` ahora con EnumWindows fallback (al arrancar el titulo es "QuickActions" del app_name; el viewport del toast se excluye por titulo vacio)
 
 ### Ronda 1
 
@@ -74,3 +78,4 @@
 | 2026-10-25 | V3 | — | tab activa texto oscuro sobre chip ámbar; ScrollArea con `max_height(available-46)` reserva fila de botones |
 | 2026-10-25 | V4 | — | X/Alt-F4 → `Visible(false)` real (desaparece de taskbar/Alt-Tab; queda solo el tray); mostrar vuelve a Visible(true)+focus |
 | 2026-10-25 | V4fix | — | egui#5229 impedía reabrir: en vez de Visible(false), WS_EX_TOOLWINDOW via `set_toolwindow()` (FindWindowW+pid check); reopen OK con tab Ayuda/Ajustes |
+| 2026-10-25 | V5 | — | arranque solo-tray: `set_toolwindow(true)` en primer frame (eframe fuerza visible tras el 1er frame, PR2279); `main_hwnd()` con EnumWindows fallback pre-titulo |

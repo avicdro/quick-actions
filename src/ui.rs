@@ -843,10 +843,14 @@ impl eframe::App for QuickActionsApp {
 
         ctx.set_pixels_per_point(1.3);
 
-        // U5: temal custom del app al primer frame.
+        // U5: tema custom del app al primer frame.
         if !self.style_applied {
             apply_theme(ctx);
             self.style_applied = true;
+            // V5: al arrancar SOLO tray — eframe muestra la ventana tras el
+            // primer frame (anti-flash, egui PR2279) ignorando visible(false);
+            // la capamos como tool window (offscreen 1x1 sin botón taskbar).
+            set_toolwindow(true);
         }
 
         // Inicializar clipboard cacheado si aun no existe.
@@ -1169,21 +1173,64 @@ pub mod theme {
     pub const ERROR: Color32 = Color32::from_rgb(200, 80, 80);
 }
 
-/// V4-fix: HWND de la ventana principal (por titulo) verificando que sea
-/// de nuestro propio proceso (evita match con apps ajenas del mismo titulo).
+/// V4-fix: HWND de la ventana principal.
+///
+/// Fast path: FindWindowW por titulo exacto ("Quick Actions", fijado al
+/// abrir). Fallback para el arranque (titulo "QuickActions" del app_name):
+/// EnumWindows y primera top-level visible de este proceso con titulo que
+/// empiece por "Quick" (el viewport del toast tiene titulo vacio).
 #[cfg(windows)]
-fn main_hwnd() -> Option<windows::Win32::Foundation::HWND> {
-    use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, GetWindowThreadProcessId};
+use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+#[cfg(windows)]
+extern "system" fn enum_quick_hwnd(hwnd: windows::Win32::Foundation::HWND, out: LPARAM) -> BOOL {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
+    };
 
     unsafe {
-        let hwnd = FindWindowW(None, windows::core::w!("Quick Actions")).ok()?;
         let mut pid = 0u32;
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        if pid == std::process::id() {
-            Some(hwnd)
-        } else {
-            None
+        if pid != std::process::id() || !IsWindowVisible(hwnd).as_bool() {
+            return BOOL(1); // seguir enumerando
         }
+        let mut buf = [0u16; 64];
+        let n = GetWindowTextW(hwnd, &mut buf);
+        let title = String::from_utf16_lossy(&buf[..n.max(0) as usize]);
+        if title.starts_with("Quick") {
+            let dst = out.0 as *mut windows::Win32::Foundation::HWND;
+            if !dst.is_null() {
+                *dst = hwnd;
+            }
+            return BOOL(0); // encontrado: parar
+        }
+        BOOL(1)
+    }
+}
+
+#[cfg(windows)]
+fn main_hwnd() -> Option<HWND> {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, FindWindowW, GetWindowThreadProcessId,
+    };
+
+    unsafe {
+        // Fast path: ya abrio la ventana alguna vez (titulo con espacio).
+        if let Ok(hwnd) = FindWindowW(None, windows::core::w!("Quick Actions")) {
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            if pid == std::process::id() {
+                return Some(hwnd);
+            }
+        }
+
+        // Fallback: EnumWindows de este proceso (titulo "QuickActions" al
+        // arrancar). Solo si nunca se ha abierto con titulo nuevo.
+        let mut result = HWND(std::ptr::null_mut());
+        let sptr = &mut result as *mut HWND as isize;
+        if EnumWindows(Some(enum_quick_hwnd), LPARAM(sptr)).is_ok() && !result.0.is_null() {
+            return Some(result);
+        }
+        None
     }
 }
 
