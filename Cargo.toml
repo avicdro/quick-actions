@@ -11,6 +11,9 @@ license = "MIT"
 tokio = { version = "1.43", features = ["rt-multi-thread", "sync", "macros", "time"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
+# U7: verificacion sha256 del binario descargado por el auto-update
+sha2 = "0.10"
+
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

@@ -25,6 +25,8 @@ pub mod clipboard;
 #[cfg(windows)]
 pub mod key_sim;
 #[cfg(windows)]
+pub mod self_update;
+#[cfg(windows)]
 pub mod tray;
 #[cfg(windows)]
 pub mod ui;

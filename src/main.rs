@@ -92,6 +92,31 @@ fn windows_main() {
     let (hotkey_tx, hotkey_rx) = channel::<HotkeyCommand>();
     let ui_channels = UiChannels::new();
 
+    // === U7: aftermath del auto-update — limpiar el binario previo y
+    // avisar "Actualizado" (el marker lo escribe el updater antes de
+    // reiniciar). Si el .prev sigue lockeado, se reintentara en el proximo
+    // arranque (mejor esfuerzo, silencioso).
+    {
+        let prev = exe_dir.join("quick-actions.prev.exe");
+        if prev.exists() {
+            match std::fs::remove_file(&prev) {
+                Ok(()) => tracing::info!("Auto-update: .prev.exe eliminado."),
+                Err(e) => tracing::debug!("Auto-update: .prev.exe sigue lockeado: {e}"),
+            }
+        }
+        let marker = exe_dir.join("update-applied.tmp");
+        if let Ok(tag) = std::fs::read_to_string(&marker) {
+            let _ = std::fs::remove_file(&marker);
+            let tag = tag.trim();
+            tracing::info!("Auto-update completado en el arranque previo: {tag}.");
+            let _ = ui_channels
+                .tx
+                .send(quick_actions::ui_protocol::UiCommand::SetStatus(format!(
+                    "Actualizado a {tag} ✓"
+                )));
+        }
+    }
+
     // Flag compartido de pausa de atajos (tray <-> hook) — P2.
     let suspended = Arc::new(std::sync::atomic::AtomicBool::new(false));
 

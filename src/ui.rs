@@ -69,6 +69,8 @@ pub struct QuickActionsApp {
     toast_expiry: Option<std::time::Instant>,
     /// Si hay aviso de update activo: URL de descarga en pestaña Resultado.
     update_url: Option<String>,
+    /// U7: tag de la release pendiente de aplicar (boton "Actualizar ahora").
+    update_tag: Option<String>,
 
     /// U5: si ya aplicamos el tema custom (una sola vez al primer frame).
     style_applied: bool,
@@ -110,6 +112,7 @@ impl QuickActionsApp {
             paused: false,
             toast_expiry: None,
             update_url: None,
+            update_tag: None,
         }
     }
 
@@ -127,6 +130,7 @@ impl QuickActionsApp {
                     self.window_open = true;
                     // Un resultado normal cancela cualquier aviso de update
                     self.update_url = None;
+                    self.update_tag = None;
                 }
                 UiCommand::ShowHistory(data) => {
                     self.history_data = Some(data);
@@ -191,6 +195,8 @@ impl QuickActionsApp {
                     };
                     self.result_original = body;
                     self.update_url = Some(url);
+                    // U7: tag para el boton "Actualizar ahora".
+                    self.update_tag = Some(version.clone());
                     self.result_data = Some(ResultData {
                         titulo: format!("Nueva version disponible: {version}"),
                         original: String::new(),
@@ -246,15 +252,41 @@ impl QuickActionsApp {
             ui.add(egui::Separator::default().horizontal());
             let url_click = url.clone();
             ui.horizontal(|ui| {
-                if ui
-                    .link(egui::RichText::new("Descargar desde GitHub ↗").strong())
-                    .clicked()
-                {
+                if ui.button("Descargar en el navegador ↗").clicked() {
                     open_url_in_browser(&url_click);
+                }
+                // U7: update de un click (descarga + verificar SHA-256 +
+                // swap del binario + reinicio de la app).
+                if let Some(tag) = self.update_tag.clone() {
+                    if ui.button("Actualizar ahora").clicked() {
+                        let repo = self
+                            .state
+                            .config_snapshot()
+                            .map(|c| c.app.repository)
+                            .unwrap_or_default();
+                        if repo.is_empty() {
+                            let _ = self.state.ui_tx.send(UiCommand::SetStatus(
+                                "Error: sin repositorio configurado (Ajustes)".to_string(),
+                            ));
+                            self.state.repaint();
+                        } else {
+                            let ui_tx = self.state.ui_tx.clone();
+                            let repaint = self.state.repaint.clone();
+                            let _ = self.state.ui_tx.send(UiCommand::SetStatus(
+                                "Descargando actualizacion...".to_string(),
+                            ));
+                            self.state.repaint();
+                            // Worker: el swap/reinicio hace todo el trabajo.
+                            let tag2 = tag.clone();
+                            std::thread::spawn(move || {
+                                crate::self_update::apply_update(&repo, &tag2, ui_tx, repaint);
+                            });
+                        }
+                    }
                 }
             });
             ui.label(
-                egui::RichText::new("(no instala nada automaticamente)")
+                egui::RichText::new("Descarga el exe, verifica su SHA-256 y reinicia la app solo.")
                     .small()
                     .color(egui::Color32::GRAY),
             );
