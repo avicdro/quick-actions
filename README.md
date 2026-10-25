@@ -14,6 +14,7 @@ Suite de atajos globales para IA y productividad en **Windows**, escrita en **Ru
 - 🔔 **Toasts de estado** con spinner animado durante las peticiones
 - 🥥 **System tray icon** con icono propio embebido en el exe (`.ico`, menú completo: ayuda/config/autostart/pausa/modelo)
 - 🔒 **Instancia única** (mutex de Windows): un segundo arranque enfoca la ventana abierta y sale, no duplica tray/hook
+- 🎨 **Tema oscuro / claro / según sistema** (Ajustes → Apariencia; "Sistema" sigue a Windows al instante, cambio sin reinicio)
 - ⚙️ **Config externa** `config.toml` — edita sin recompilar
 
 ## ⌨️ Atajos (modificador configurable — default `Alt`)
@@ -71,6 +72,7 @@ font_size = 16
 window_width = 800
 window_height = 600
 history_max_entries = 50
+theme = "dark"           # "dark" (default), "light" o "system" (sigue Windows)
 
 [paths]
 chrome = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"

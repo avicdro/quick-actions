@@ -11,6 +11,7 @@ font_size = 16              # Tamano de fuente en ventanas de resultado
 window_width = 800
 window_height = 600
 history_max_entries = 50    # Maximo entradas en historial de correcciones
+theme = "dark"              # "dark" (default), "light" o "system" (sigue Windows)
 
 [hotkeys]
 # Las hotkeys estan hardcodeadas en codigo (como AHK),

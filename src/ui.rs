@@ -72,8 +72,9 @@ pub struct QuickActionsApp {
     /// U7: tag de la release pendiente de aplicar (boton "Actualizar ahora").
     update_tag: Option<String>,
 
-    /// U5: si ya aplicamos el tema custom (una sola vez al primer frame).
-    style_applied: bool,
+    /// T1: paleta aplicada actualmente (None = dark por defecto de egui);
+    /// el re-apply reactivo de tema compara contra esto cada frame.
+    applied: Option<&'static theme::Palette>,
     /// V6: cap del arranque en tool-window, aplicado con reintento por
     /// frame (el titulo del root existe recien al final del frame 1; el
     /// primer intento no encuentra el HWND y no-op).
@@ -92,7 +93,7 @@ impl QuickActionsApp {
             ui_rx,
             hotkey_rx,
             state,
-            style_applied: false,
+            applied: None,
             boot_tool_done: false,
             result_data: None,
             result_original: String::new(),
@@ -305,7 +306,7 @@ impl QuickActionsApp {
 
         ui.label(
             egui::RichText::new(&data.titulo)
-                .color(theme::ACCENT) // L8: antes navy-sobre-navy, invisible
+                .color(theme::palette().accent) // L8: antes navy-sobre-navy, invisible
                 .strong(),
         );
         ui.add_sized(
@@ -340,12 +341,15 @@ impl QuickActionsApp {
                     egui::RichText::new(format!(
                         "Sin historial todavia. Pulsa {m}+V para cargarlo."
                     ))
-                    .color(theme::TEXT_DIM),
+                    .color(theme::palette().text_dim),
                 );
             }
             Some(ref entries) if entries.is_empty() => {
                 ui.add_space(6.0);
-                ui.label(egui::RichText::new("El historial esta vacio.").color(theme::TEXT_DIM));
+                ui.label(
+                    egui::RichText::new("El historial esta vacio.")
+                        .color(theme::palette().text_dim),
+                );
             }
             Some(entries) => {
                 ui.label(format!("{} entradas:", entries.len()));
@@ -411,7 +415,7 @@ impl QuickActionsApp {
             ui.strong("Asistente de IA");
             ui.label(
                 egui::RichText::new("Selecciona texto en cualquier app y pulsa:")
-                    .color(theme::TEXT_DIM),
+                    .color(theme::palette().text_dim),
             );
             ui.add_space(4.0);
             ui.separator();
@@ -436,7 +440,7 @@ impl QuickActionsApp {
                      • La pausa total y los atajos individuales se cambian en el menu\n  \
                      del tray y en la pestana Ajustes.",
                 )
-                .color(theme::TEXT_DIM),
+                .color(theme::palette().text_dim),
             );
             if toggle_note {
                 ui.add_space(2.0);
@@ -445,7 +449,7 @@ impl QuickActionsApp {
                         "⚠ CapsLock esta en modo toggle: un tap lo latchea y la\n  \
                          proxima tecla de atajo dispara (no alterna mayusculas).",
                     )
-                    .color(theme::ACCENT),
+                    .color(theme::palette().accent),
                 );
             }
         });
@@ -476,6 +480,55 @@ impl QuickActionsApp {
             .max_height(ui.available_height() - buttons_h)
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
+
+                // ================================================== Apariencia
+                // T1: tema oscuro / claro / sistema (live re-apply).
+                settings_card(ui, "Apariencia", |ui| {
+                    egui::Grid::new("grid_apariencia")
+                        .num_columns(2)
+                        .spacing([16.0, 11.0])
+                        .show(ui, |ui| {
+                            ui.label("Tema:");
+                            let mut choice = cfg.ui.theme_choice();
+                            egui::ComboBox::from_id_salt("combo_tema")
+                                .selected_text(match choice {
+                                    crate::config::ThemeChoice::Dark => "Oscuro",
+                                    crate::config::ThemeChoice::Light => "Claro",
+                                    crate::config::ThemeChoice::System => "Sistema (Windows)",
+                                })
+                                .width(170.0)
+                                .show_ui(ui, |ui| {
+                                    for (opt, label) in [
+                                        (crate::config::ThemeChoice::Dark, "Oscuro"),
+                                        (crate::config::ThemeChoice::Light, "Claro"),
+                                        (crate::config::ThemeChoice::System, "Sistema (Windows)"),
+                                    ] {
+                                        if ui.selectable_value(&mut choice, opt, label).clicked() {
+                                            // Persistir + replicar en el RwLock:
+                                            // el re-apply reactivo del update()
+                                            // pinta la paleta nueva al frame
+                                            // siguiente, sin reinicio.
+                                            let _ = crate::config::Config::write_config_key(
+                                                &self.state.config_path,
+                                                "ui",
+                                                "theme",
+                                                opt.as_config_str(),
+                                            );
+                                            if let Ok(mut c) = self.state.config.write() {
+                                                c.ui.theme = opt.as_config_str().to_string();
+                                            }
+                                        }
+                                    }
+                                });
+                            ui.end_row();
+                        });
+                    ui.label(
+                        egui::RichText::new(
+                            "\"Sistema\" sigue el tema claro/oscuro de Windows al instante.",
+                        )
+                        .color(theme::palette().text_dim),
+                    );
+                });
 
                 // ================================================== Ollama
                 settings_card(ui, "Ollama", |ui| {
@@ -567,7 +620,7 @@ impl QuickActionsApp {
                                 }
                                 ui.label(
                                     egui::RichText::new("segundos de espera para la API")
-                                        .color(theme::TEXT_DIM),
+                                        .color(theme::palette().text_dim),
                                 );
                             });
                             ui.end_row();
@@ -677,7 +730,8 @@ impl QuickActionsApp {
                     // Pausa modular per-atajo (U3): grid 2 columnas.
                     ui.add_space(6.0);
                     ui.label(
-                        egui::RichText::new("Habilitar individualmente:").color(theme::TEXT_DIM),
+                        egui::RichText::new("Habilitar individualmente:")
+                            .color(theme::palette().text_dim),
                     );
                     egui::Grid::new("grid_atajos")
                         .num_columns(2)
@@ -794,7 +848,7 @@ impl QuickActionsApp {
                             }
                             ui.label(
                                 egui::RichText::new("usado por el check de updates")
-                                    .color(theme::TEXT_DIM),
+                                    .color(theme::palette().text_dim),
                             );
                             ui.end_row();
                         });
@@ -806,7 +860,7 @@ impl QuickActionsApp {
                     ui.label(
                         egui::RichText::new(format!("Versión: {}", crate::version_string()))
                             .small()
-                            .color(theme::TEXT_DIM),
+                            .color(theme::palette().text_dim),
                     );
 
                     // U6: control manual del check (sin polling desde v0.2:
@@ -830,7 +884,7 @@ impl QuickActionsApp {
                         ui.label(
                             egui::RichText::new("Setea primero un repositorio")
                                 .small()
-                                .color(theme::TEXT_DIM),
+                                .color(theme::palette().text_dim),
                         );
                     }
                 });
@@ -908,10 +962,23 @@ impl eframe::App for QuickActionsApp {
 
         ctx.set_pixels_per_point(1.3);
 
-        // U5: tema custom del app al primer frame.
-        if !self.style_applied {
-            apply_theme(ctx);
-            self.style_applied = true;
+        // T1: tema — paleta por eleccion de config (dark/light/system);
+        // re-aplicar SOLO si la paleta efectiva cambia (combo de Ajustes
+        // on-the-fly o tema de Windows en modo sistema). Cada frame el
+        // check es trivial (dos comparaciones).
+        let choice = self
+            .state
+            .config
+            .read()
+            .ok()
+            .map(|c| c.ui.theme_choice())
+            .unwrap_or(crate::config::ThemeChoice::Dark);
+        let sys_light = ctx.system_theme() == Some(egui::Theme::Light);
+        let palette = theme::palette_for(choice, sys_light);
+        if self.applied != Some(palette) {
+            apply_theme(ctx, palette);
+            self.applied = Some(palette);
+            tracing::info!("T1 tema aplicado: {choice:?} (sistema claro={sys_light}).");
         }
 
         // V5/V6: cap del arranque en tool window (solo-tray). Reintento por
@@ -986,7 +1053,8 @@ impl eframe::App for QuickActionsApp {
                     // de este hijo neutraliza el fill de seleccion solo para
                     // estas tabs (la seleccion de texto global queda intacta).
                     ui.style_mut().visuals.selection.bg_fill = egui::Color32::TRANSPARENT;
-                    ui.style_mut().visuals.selection.stroke = egui::Stroke::new(1.5, theme::ACCENT);
+                    ui.style_mut().visuals.selection.stroke =
+                        egui::Stroke::new(1.5, theme::palette().accent);
                     let tabs = [
                         (Tab::Result, "Resultado"),
                         (Tab::History, "Historial"),
@@ -998,9 +1066,9 @@ impl eframe::App for QuickActionsApp {
                         // L9: texto ambar si activa, dim lo demas (con borde
                         // solo, el relleno oscuro ya no pide texto oscuro).
                         let mut text = egui::RichText::new(label).size(15.0).color(if selected {
-                            theme::ACCENT
+                            theme::palette().accent
                         } else {
-                            theme::TEXT_DIM
+                            theme::palette().text_dim
                         });
                         if selected {
                             text = text.strong();
@@ -1011,7 +1079,7 @@ impl eframe::App for QuickActionsApp {
                             ui.painter().rect_stroke(
                                 resp.rect.expand(3.0),
                                 8.0,
-                                egui::Stroke::new(1.5, theme::ACCENT),
+                                egui::Stroke::new(1.5, theme::palette().accent),
                             );
                         }
                         if resp.clicked() {
@@ -1069,13 +1137,13 @@ impl eframe::App for QuickActionsApp {
                     let bg = if is_error {
                         egui::Color32::from_rgb(42, 16, 18) // rojo profundo
                     } else {
-                        theme::BG_ELEV
+                        theme::palette().bg_elev
                     };
 
                     let border = if is_error {
-                        theme::ERROR
+                        theme::palette().error
                     } else {
-                        theme::ACCENT
+                        theme::palette().accent
                     };
 
                     // Animacion de pulso: el borde se aclara y oscila
@@ -1207,7 +1275,7 @@ impl eframe::App for QuickActionsApp {
                                 } else if paused {
                                     egui::Color32::from_rgb(250, 230, 190)
                                 } else {
-                                    theme::TEXT
+                                    theme::palette().text
                                 };
                                 ui.label(
                                     egui::RichText::new(&status)
@@ -1240,32 +1308,133 @@ impl eframe::App for QuickActionsApp {
     }
 }
 
-/// U5: paleta de la marca (navy + ambar, familia del icono del tray).
+/// U5 + T1: paletas del app — DARK (navy + ambar, familia del icono del
+/// tray) y LIGHT (papel calido + tinta navy, mismo acento ambar en tono
+/// oscuro para contraste). `palette()` consulta la activa global (atomico)
+/// desde cualquier sitio de dibujo; `apply_theme` la aplica al estilo egui.
 pub mod theme {
     use egui::Color32;
+    use std::sync::atomic::{AtomicU8, Ordering};
 
-    /// Fondo principal de la ventana.
-    pub const BG_PANEL: Color32 = Color32::from_rgb(13, 19, 33);
-    /// Fondo de panales/areas elevadas (toast, popups).
-    pub const BG_ELEV: Color32 = Color32::from_rgb(19, 28, 48);
-    /// Fondo extreme (inputs).
-    pub const BG_INPUT: Color32 = Color32::from_rgb(10, 16, 28);
-    /// Fondo de widgets (botones/checkbox base).
-    pub const BG_WIDGET: Color32 = Color32::from_rgb(22, 31, 53);
-    /// Fondo de widget con hover.
-    pub const BG_WIDGET_HOVER: Color32 = Color32::from_rgb(29, 43, 78);
-    /// V1: fondo de card (secciones de Ajustes) — un escalon sobre el panel.
-    pub const CARD: Color32 = Color32::from_rgb(18, 27, 46);
-    /// Acento ambar (misma familia que el icono del tray).
-    pub const ACCENT: Color32 = Color32::from_rgb(255, 201, 60);
-    /// Texto secundario contrastado (V1: sube el dim antiguo).
-    pub const TEXT_DIM: Color32 = Color32::from_rgb(186, 195, 210);
-    /// Texto primario.
-    pub const TEXT: Color32 = Color32::from_rgb(232, 230, 227);
-    /// Linea/borde sutil.
-    pub const STROKE: Color32 = Color32::from_rgb(58, 69, 96);
-    /// Error (icono/fondo).
-    pub const ERROR: Color32 = Color32::from_rgb(200, 80, 80);
+    use crate::config::ThemeChoice;
+
+    /// Paleta nominal: superficies, texto, acento y derivados de estado.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Palette {
+        /// Fondo principal de la ventana.
+        pub bg_panel: Color32,
+        /// Fondo de panales/areas elevadas (toast, popups).
+        pub bg_elev: Color32,
+        /// Fondo extreme (inputs).
+        pub bg_input: Color32,
+        /// Fondo de widgets (botones/checkbox base).
+        pub bg_widget: Color32,
+        /// Fondo de widget con hover.
+        pub bg_widget_hover: Color32,
+        /// V1: fondo de card (secciones de Ajustes) — un escalon entre elev y panel.
+        pub card: Color32,
+        /// Acento ambar de la marca: EN CLARO va en tono oscuro (contraste
+        /// como texto/stroke; los badges con fondo ambar llevan tinta).
+        pub accent: Color32,
+        /// Texto primario (tinta navy en claro).
+        pub text: Color32,
+        /// Texto secundario contrastado (V1: sube el dim antiguo).
+        pub text_dim: Color32,
+        /// Linea/borde sutil.
+        pub stroke: Color32,
+        /// Error (icono/fondo).
+        pub error: Color32,
+        /// L8: fondo de seleccion de texto opaco (el stroke de la
+        /// seleccion pinta el texto del item con `text`).
+        pub selection_bg: Color32,
+        /// L8: fondo de widget activo (boton pulsado / item seleccionado).
+        pub active_bg: Color32,
+        /// Alpha de la sombra grande de ventana.
+        pub window_shadow_alpha: u8,
+        /// Alpha de la sombra de popups/menus (combos).
+        pub popup_shadow_alpha: u8,
+    }
+
+    /// Dark (U5/L8): navy profundo + ambar #FFC93C.
+    pub const DARK: Palette = Palette {
+        bg_panel: Color32::from_rgb(13, 19, 33),
+        bg_elev: Color32::from_rgb(19, 28, 48),
+        bg_input: Color32::from_rgb(10, 16, 28),
+        bg_widget: Color32::from_rgb(22, 31, 53),
+        bg_widget_hover: Color32::from_rgb(29, 43, 78),
+        card: Color32::from_rgb(18, 27, 46),
+        accent: Color32::from_rgb(255, 201, 60),
+        text: Color32::from_rgb(232, 230, 227),
+        text_dim: Color32::from_rgb(186, 195, 210),
+        stroke: Color32::from_rgb(58, 69, 96),
+        error: Color32::from_rgb(200, 80, 80),
+        selection_bg: Color32::from_rgb(84, 64, 22),
+        active_bg: Color32::from_rgb(42, 62, 110),
+        window_shadow_alpha: 140,
+        popup_shadow_alpha: 150,
+    };
+
+    /// Light (T1): papel calido + tinta navy, ambar oscuro para
+    /// titulos/strokes (el ambar #FFC93C como TEXTO era ilegible en claro).
+    pub const LIGHT: Palette = Palette {
+        bg_panel: Color32::from_rgb(237, 234, 226),
+        bg_elev: Color32::from_rgb(250, 248, 243),
+        bg_input: Color32::from_rgb(255, 255, 255),
+        bg_widget: Color32::from_rgb(228, 223, 212),
+        bg_widget_hover: Color32::from_rgb(219, 212, 198),
+        card: Color32::from_rgb(244, 241, 234),
+        accent: Color32::from_rgb(158, 103, 8),
+        text: Color32::from_rgb(26, 33, 44),
+        text_dim: Color32::from_rgb(95, 106, 124),
+        stroke: Color32::from_rgb(201, 196, 184),
+        error: Color32::from_rgb(168, 52, 52),
+        selection_bg: Color32::from_rgb(244, 214, 122),
+        active_bg: Color32::from_rgb(213, 224, 243),
+        window_shadow_alpha: 45,
+        popup_shadow_alpha: 55,
+    };
+
+    /// 0 = dark, 1 = light (solo lo toca `set_active`; el dibujo lee).
+    static ACTIVE_IS_LIGHT: AtomicU8 = AtomicU8::new(0);
+
+    /// Paleta activa para DIBUJAR (antes de que `apply_theme` la aplique:
+    /// DARK — y de fallback para cualquier frame previo).
+    pub fn palette() -> &'static Palette {
+        if is_light() {
+            &LIGHT
+        } else {
+            &DARK
+        }
+    }
+
+    /// T1: paleta por eleccion de config + tema del sistema.
+    pub fn palette_for(choice: ThemeChoice, system_is_light: bool) -> &'static Palette {
+        match choice {
+            ThemeChoice::Dark => &DARK,
+            ThemeChoice::Light => &LIGHT,
+            ThemeChoice::System => {
+                if system_is_light {
+                    &LIGHT
+                } else {
+                    &DARK
+                }
+            }
+        }
+    }
+
+    /// La paleta activa es la clara? (para el baseline egui en apply_theme).
+    pub fn is_light() -> bool {
+        ACTIVE_IS_LIGHT.load(Ordering::Relaxed) == 1
+    }
+
+    /// Fija la paleta activa (lo llama `apply_theme` ANTES del style_mut:
+    /// todo frame pinta y consulta coherentes).
+    pub fn set_active(p: &'static Palette) {
+        ACTIVE_IS_LIGHT.store(
+            if std::ptr::eq(p, &LIGHT) { 1 } else { 0 },
+            Ordering::Relaxed,
+        );
+    }
 }
 
 /// V4-fix: HWND de la ventana principal.
@@ -1480,29 +1649,42 @@ fn set_toolwindow(_tool: bool) -> bool {
     false
 }
 
-/// U5+V1: aplica el tema visual del app (dark navy + acento ambar) una vez.
-fn apply_theme(ctx: &egui::Context) {
+/// U5 + V1 + T1: aplica la paleta al estilo egui — baseline dark/light
+/// acorde (los valores que NO se pisan abajo heredan de un base sane:
+/// separadores, submenus, drag...) y luego los overrides de la paleta.
+/// Se invoca solo AL CAMBIAR de paleta (config on-the-fly o tema del
+/// sistema); el coste es trivial comparado con un frame.
+fn apply_theme(ctx: &egui::Context, p: &'static theme::Palette) {
     use egui::{Color32, FontId, Shadow, Stroke, Vec2};
+
+    // La paleta activa ANTES de tocar estilos: cualquier dibujo del frame
+    // (incluido el toast viewport) consulta `theme::palette()` coherente.
+    theme::set_active(p);
+    if theme::is_light() {
+        ctx.set_theme(egui::Theme::Light); // baseline claro de egui
+    } else {
+        ctx.set_theme(egui::Theme::Dark);
+    }
 
     ctx.style_mut(|style| {
         let v = &mut style.visuals;
-        v.panel_fill = theme::BG_PANEL;
-        v.window_fill = theme::BG_ELEV;
-        v.extreme_bg_color = theme::BG_INPUT;
-        v.window_stroke = Stroke::new(1.0, theme::STROKE);
+        v.panel_fill = p.bg_panel;
+        v.window_fill = p.bg_elev;
+        v.extreme_bg_color = p.bg_input;
+        v.window_stroke = Stroke::new(1.0, p.stroke);
         v.window_shadow = Shadow {
             offset: Vec2::new(0.0, 5.0),
             blur: 22.0,
             spread: 2.0,
-            color: Color32::from_black_alpha(140),
+            color: Color32::from_black_alpha(p.window_shadow_alpha),
         };
         // L8: seleccion de texto legible en TODO (TextEdit y etiquetas):
-        // fondo ambar OSCURO opaco + texto claro (egui 0.29: el texto del
+        // fondo ambar opaco + texto de la paleta (egui 0.29: el texto del
         // item seleccionado usa selection.stroke.color; el translucido
         // amarillo anterior tapaba las letras y los items iban ambar-sobre-
         // ambar).
-        v.selection.bg_fill = Color32::from_rgb(84, 64, 22);
-        v.selection.stroke = Stroke::new(1.0, theme::TEXT);
+        v.selection.bg_fill = p.selection_bg;
+        v.selection.stroke = Stroke::new(1.0, p.text);
 
         // Rounding global (L8: radios 12 en superficies, 8 en widgets).
         v.window_rounding = 12.0.into();
@@ -1522,28 +1704,28 @@ fn apply_theme(ctx: &egui::Context) {
             offset: Vec2::new(0.0, 6.0),
             blur: 18.0,
             spread: 1.0,
-            color: Color32::from_black_alpha(150),
+            color: Color32::from_black_alpha(p.popup_shadow_alpha),
         };
         // V1 a11y: checkmarks e iconos bien visibles (texto claro, acento en
         // hover/activo); los strokes mas gruesos para baja vision.
-        v.widgets.noninteractive.fg_stroke = Stroke::new(1.6, theme::TEXT_DIM);
-        v.widgets.inactive.fg_stroke = Stroke::new(1.6, theme::TEXT);
-        v.widgets.open.fg_stroke = Stroke::new(1.6, theme::TEXT);
-        v.widgets.hovered.fg_stroke = Stroke::new(1.6, theme::ACCENT);
-        v.widgets.active.fg_stroke = Stroke::new(1.6, theme::ACCENT);
-        v.widgets.inactive.bg_fill = theme::BG_WIDGET;
-        v.widgets.inactive.weak_bg_fill = theme::BG_WIDGET;
-        v.widgets.hovered.bg_fill = theme::BG_WIDGET_HOVER;
-        v.widgets.hovered.weak_bg_fill = theme::BG_WIDGET_HOVER;
-        v.widgets.active.bg_fill = Color32::from_rgb(42, 62, 110);
-        v.widgets.active.weak_bg_fill = Color32::from_rgb(42, 62, 110);
-        v.widgets.hovered.bg_stroke = Stroke::new(1.2, theme::STROKE);
-        v.widgets.active.bg_stroke = Stroke::new(1.2, theme::ACCENT);
+        v.widgets.noninteractive.fg_stroke = Stroke::new(1.6, p.text_dim);
+        v.widgets.inactive.fg_stroke = Stroke::new(1.6, p.text);
+        v.widgets.open.fg_stroke = Stroke::new(1.6, p.text);
+        v.widgets.hovered.fg_stroke = Stroke::new(1.6, p.accent);
+        v.widgets.active.fg_stroke = Stroke::new(1.6, p.accent);
+        v.widgets.inactive.bg_fill = p.bg_widget;
+        v.widgets.inactive.weak_bg_fill = p.bg_widget;
+        v.widgets.hovered.bg_fill = p.bg_widget_hover;
+        v.widgets.hovered.weak_bg_fill = p.bg_widget_hover;
+        v.widgets.active.bg_fill = p.active_bg;
+        v.widgets.active.weak_bg_fill = p.active_bg;
+        v.widgets.hovered.bg_stroke = Stroke::new(1.2, p.stroke);
+        v.widgets.active.bg_stroke = Stroke::new(1.2, p.accent);
 
         // Texto.
-        v.override_text_color = Some(theme::TEXT);
+        v.override_text_color = Some(p.text);
         // Fondo de text edits etc.
-        v.extreme_bg_color = theme::BG_INPUT;
+        v.extreme_bg_color = p.bg_input;
 
         // V1: escala tipografica accesible (por sobre el default de egui).
         style.text_styles = [
@@ -1572,9 +1754,9 @@ fn settings_card<R>(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui:
     // card floto al tamano de su contenido, con anchos desparejos).
     ui.add_space(12.0);
     egui::Frame::none()
-        .fill(theme::CARD)
+        .fill(theme::palette().card)
         .rounding(egui::Rounding::same(12.0))
-        .stroke(egui::Stroke::new(1.0, theme::STROKE))
+        .stroke(egui::Stroke::new(1.0, theme::palette().stroke))
         .inner_margin(egui::Margin::same(16.0))
         .show(ui, |ui| {
             // Ancho completo: la card ocupa todo el panel disponible.
@@ -1584,7 +1766,7 @@ fn settings_card<R>(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui:
                     egui::RichText::new(title)
                         .strong()
                         .size(16.5)
-                        .color(theme::ACCENT),
+                        .color(theme::palette().accent),
                 );
                 ui.add_space(6.0);
                 body(ui);
@@ -1595,15 +1777,15 @@ fn settings_card<R>(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui:
 /// U5: badge de tecla para la pantalla de ayuda (chip redondeado).
 fn key_badge(ui: &mut egui::Ui, text: &str) {
     egui::Frame::none()
-        .fill(theme::BG_WIDGET_HOVER)
+        .fill(theme::palette().bg_widget_hover)
         .rounding(egui::Rounding::same(5.0))
         .inner_margin(egui::Margin::symmetric(8.0, 2.0))
-        .stroke(egui::Stroke::new(1.0, theme::STROKE))
+        .stroke(egui::Stroke::new(1.0, theme::palette().stroke))
         .show(ui, |ui| {
             ui.label(
                 egui::RichText::new(text)
                     .monospace()
-                    .color(theme::ACCENT)
+                    .color(theme::palette().accent)
                     .size(13.0),
             );
         });

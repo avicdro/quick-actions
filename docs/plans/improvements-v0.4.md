@@ -112,6 +112,24 @@
   - Política (README "Versionado"): patch ilimitado post-0.2, minor para
     hitos, 1.0.0 explícito-estable. Esta es **v0.2.4`.
 
+- [x] **T1 — Tema claro + selector Oscuro/Claro/Sistema**:
+  - `theme` (config `[ui]`, default "dark"; parse tolerante EN/ES, raro → Dark,
+    + tests: `ThemeChoice` en config.rs) y card **Apariencia** en Ajustes
+    (combo 3 opciones; persiste toml_edit + replica en el RwLock — el
+    re-apply reactivo de `update()` pinta al frame siguiente, sin reinicio).
+  - `theme` consts → `Palette` struct con DARK/LIGHT (`LIGHT`: papel cálido
+    + tinta navy; ámbar #FFC93C → ámbar oscuro #9E6708 como texto/stroke
+    porque el amarillo puro era ilegible sobre claro; acento de badges con
+    fondo ámbar se conserva con tinta). `palette()` global (atomico) —
+    toast viewport y cualquier dibujo consultan coherente.
+  - `apply_theme(ctx, palette)`: baseline egui `set_theme(Dark/Light)` +
+    overrides paramétricos (selection_bg/active_bg/alphas de sombra entran
+    a la paleta); re-apply SOLO al cambiar de paleta.
+  - QA visual (PrintWindow + nvidia-smi-free): Resultado y Ayuda en dark
+    (sin regresión) y en light legibles ✓; log "T1 tema aplicado" por cambio.
+  - Fix colateral: `default_toml` tenía la sección como comentario
+    (`#[hotkeys]` → `[hotkeys]`) — configs recién generadas la llevan real.
+
 ## Registro
 
 | Fecha | Ítem | Commit | Notas |
@@ -135,3 +153,4 @@
 | 2026-10-25 | S1 | — | `single_instance.rs` (mutex `Local\` + focus cross-proceso + retry marker U7); fase `dup` en qa_smoke |
 | 2026-10-25 | N1 | — | log real del adapter (EnvFilter, RUST_LOG) + spam `Device::maintain` silenciado por target + repaint reactivo (30ms solo con toast); hallazgo: sin iGPU usable, dGPU era inevitable y nvidia-smi (Windows) no lista Vulkan |
 | 2026-10-25 | B1 | — | `build.rs` QA_BUILD_ID (GITHUB_SHA/git), `version_string()`, fila "Versión" en Ajustes, arranque del log con hash; bump 0.2.4 |
+| 2026-10-25 | T1 | — | paletas DARK/LIGHT (`theme::Palette` + atomic de activa), config `[ui] theme` (dark/light/system, parse EN/ES), card Apariencia en Ajustes con re-apply reactivo sin reinicio; QA visual dual ✓; fix `#[hotkeys]` comentado en default_toml; bump 0.2.5 |

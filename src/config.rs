@@ -45,6 +45,40 @@ impl Default for OllamaConfig {
     }
 }
 
+/// T1 — Eleccion de tema de la GUI: oscuro, claro o segun el sistema
+/// (sigue el tema claro/oscuro de Windows in-situ).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThemeChoice {
+    /// Navy + ambar (identidad de marca, default).
+    Dark,
+    /// Papel calido + tinta navy (mismo acento ambar en tono oscuro).
+    Light,
+    /// Sigue el tema claro/oscuro de Windows al instante.
+    System,
+}
+
+impl ThemeChoice {
+    /// String canonica en config.toml (lo que escribe el combo de Ajustes).
+    pub fn as_config_str(self) -> &'static str {
+        match self {
+            Self::Dark => "dark",
+            Self::Light => "light",
+            Self::System => "system",
+        }
+    }
+
+    /// Parse tolerante: acepta ingles y castellano, trim + lowercase,
+    /// y cae en Dark ante cualquier valor raro (config a mano a prueba
+    /// de usuarios).
+    pub fn parse(raw: &str) -> Self {
+        match raw.trim().to_lowercase().as_str() {
+            "light" | "claro" | "light-mode" => Self::Light,
+            "system" | "sistema" => Self::System,
+            _ => Self::Dark,
+        }
+    }
+}
+
 /// Configuracion visual de las ventanas.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
@@ -57,6 +91,8 @@ pub struct UiConfig {
     pub window_height: u32,
     /// Maximo de entradas en el historial de correcciones.
     pub history_max_entries: usize,
+    /// T1: tema de la GUI — "dark", "light" o "system".
+    pub theme: String,
 }
 
 impl Default for UiConfig {
@@ -66,7 +102,15 @@ impl Default for UiConfig {
             window_width: 800,
             window_height: 600,
             history_max_entries: 50,
+            theme: "dark".to_string(),
         }
+    }
+}
+
+impl UiConfig {
+    /// T1: eleccion parseada de config (tolerante; valor raro = Dark).
+    pub fn theme_choice(&self) -> ThemeChoice {
+        ThemeChoice::parse(&self.theme)
     }
 }
 
@@ -227,8 +271,9 @@ font_size = 16
 window_width = 800
 window_height = 600
 history_max_entries = 50
+theme = "dark"          # "dark" (default), "light" o "system" (sigue Windows)
 
-#[hotkeys]
+[hotkeys]
 enabled = true
 modifier = "alt"        # "alt" (default) o "capslock"
 capsmode = "hold"       # solo capslock: "hold" (mantener) o "toggle" (latched)
@@ -417,6 +462,38 @@ model = "test-model"
         assert_eq!(c.ollama.endpoint, "http://localhost:11434/api/generate");
         assert_eq!(c.ui.font_size, 16);
         assert!(c.hotkeys.enabled);
+    }
+
+    #[test]
+    fn theme_choice_parsea_aliases_de_idiomas() {
+        // Ingles
+        assert_eq!(ThemeChoice::parse("dark"), ThemeChoice::Dark);
+        assert_eq!(ThemeChoice::parse("light"), ThemeChoice::Light);
+        assert_eq!(ThemeChoice::parse("system"), ThemeChoice::System);
+        // Castellano (T1)
+        assert_eq!(ThemeChoice::parse("claro"), ThemeChoice::Light);
+        assert_eq!(ThemeChoice::parse("oscuro"), ThemeChoice::Dark);
+        assert_eq!(ThemeChoice::parse("sistema"), ThemeChoice::System);
+        // Trim + mayusculas
+        assert_eq!(ThemeChoice::parse("  LIGHT "), ThemeChoice::Light);
+        // Fallback: valor raro -> Dark (default de marca)
+        assert_eq!(ThemeChoice::parse("neón"), ThemeChoice::Dark);
+        assert_eq!(ThemeChoice::parse(""), ThemeChoice::Dark);
+    }
+
+    #[test]
+    fn theme_choice_roundtrip_con_config_str() {
+        for choice in [ThemeChoice::Dark, ThemeChoice::Light, ThemeChoice::System] {
+            assert_eq!(ThemeChoice::parse(choice.as_config_str()), choice);
+        }
+    }
+
+    #[test]
+    fn ui_config_sin_theme_usa_dark() {
+        let c: Config = toml::from_str("[ui]\nhistory_max_entries = 7\n").unwrap();
+        assert_eq!(c.ui.theme_choice(), ThemeChoice::Dark);
+        let c2: Config = toml::from_str("[ui]\ntheme = \"claro\"\n").unwrap();
+        assert_eq!(c2.ui.theme_choice(), ThemeChoice::Light);
     }
 
     #[test]
