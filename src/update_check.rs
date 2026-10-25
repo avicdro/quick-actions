@@ -31,6 +31,10 @@ pub struct LatestRelease {
 
 /// Lanza el check en un thread de fondo (fire & forget).
 ///
+/// U6: SOLO se ejecuta UNA VEZ al arranque (no hay polling: una unica
+/// llamada HTTP por sesion, y silenciosa si no hay update). El control
+/// manual vive en `run_manual_check` (boton de Ajustes).
+///
 /// No-op si esta desactivado (`check_updates = false`) o sin repo configurado.
 pub fn spawn_check(app_config: &AppConfig, ui_tx: Sender<UiCommand>) {
     if !app_config.check_updates || app_config.repository.is_empty() {
@@ -38,36 +42,79 @@ pub fn spawn_check(app_config: &AppConfig, ui_tx: Sender<UiCommand>) {
     }
 
     let repo = app_config.repository.clone();
+    let ui_tx2 = ui_tx.clone();
 
-    std::thread::spawn(move || {
-        let runtime = crate::runtime::global();
-        match runtime.block_on(fetch_latest(&repo)) {
-            Ok(release) => {
-                if is_newer_tag(&release.tag, env!("CARGO_PKG_VERSION")) {
-                    tracing::info!(
-                        "Nueva version disponible: {} (corriendo {})",
-                        release.tag,
-                        env!("CARGO_PKG_VERSION")
-                    );
-                    let _ = ui_tx.send(UiCommand::ShowUpdate {
-                        version: release.tag,
-                        url: release.url,
-                        body: release.body,
-                    });
-                } else {
-                    tracing::debug!(
-                        "Sin updates: {} <= {}",
-                        release.tag,
-                        env!("CARGO_PKG_VERSION")
-                    );
-                }
-            }
-            Err(e) => {
-                // No es critico: falla silenciosa (offline, rate limit, etc).
-                tracing::debug!("Check de updates ignoro: {e}");
+    std::thread::spawn(move || quiet_check(&repo, &ui_tx2));
+}
+
+/// Check silencioso (arranque): avisa UNICAMENTE si hay version nueva.
+fn quiet_check(repo: &str, ui_tx: &Sender<UiCommand>) {
+    let runtime = crate::runtime::global();
+    match runtime.block_on(fetch_latest(repo)) {
+        Ok(release) => {
+            if is_newer_tag(&release.tag, env!("CARGO_PKG_VERSION")) {
+                tracing::info!(
+                    "Nueva version disponible: {} (corriendo {})",
+                    release.tag,
+                    env!("CARGO_PKG_VERSION")
+                );
+                let _ = ui_tx.send(UiCommand::ShowUpdate {
+                    version: release.tag,
+                    url: release.url,
+                    body: release.body,
+                });
+            } else {
+                tracing::debug!(
+                    "Sin updates: {} <= {}",
+                    release.tag,
+                    env!("CARGO_PKG_VERSION")
+                );
             }
         }
-    });
+        Err(e) => {
+            // No es critico: falla silenciosa (offline, rate limit, etc).
+            tracing::debug!("Check de updates ignoro: {e}");
+        }
+    }
+}
+
+/// Check MANUAL (U6: boton "Buscar actualizaciones" de la pestana Ajustes).
+///
+/// A diferencia del de arranque SIEMPRE da feedback por toast:
+/// - Hay update -> `ShowUpdate` (visor de notas + enlace).
+/// - Sin update -> Notice "Estas en la ultima version".
+/// - Fallo (offline/rate limit) -> Error con la causa.
+///
+/// Corre en un thread de fondo: el llamador (UI) dispara el toast de
+/// "Buscando..." antes de invocar esto.
+pub fn run_manual_check(repo: &str, ui_tx: Sender<UiCommand>) {
+    let runtime = crate::runtime::global();
+    match runtime.block_on(fetch_latest(repo)) {
+        Ok(release) => {
+            if is_newer_tag(&release.tag, env!("CARGO_PKG_VERSION")) {
+                tracing::info!(
+                    "Nueva version (manual): {} (corriendo {})",
+                    release.tag,
+                    env!("CARGO_PKG_VERSION")
+                );
+                let _ = ui_tx.send(UiCommand::ShowUpdate {
+                    version: release.tag,
+                    url: release.url,
+                    body: release.body,
+                });
+            } else {
+                let _ = ui_tx.send(UiCommand::SetStatus(format!(
+                    "Estas en la ultima version (v{})",
+                    env!("CARGO_PKG_VERSION")
+                )));
+            }
+        }
+        Err(e) => {
+            let _ = ui_tx.send(UiCommand::SetStatus(format!(
+                "Error: no se pudo revisar updates: {e}"
+            )));
+        }
+    }
 }
 
 /// Consulta la ultima release del repo en GitHub.

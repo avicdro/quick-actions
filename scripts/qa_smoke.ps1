@@ -10,7 +10,7 @@
 #         (equivale a la X) y dumpea: debe volver a TOOLWINDOW offscreen.
 # Escribe reporte en logs\qa_<fase>.txt y captura logs\qa_<fase>.png.
 # Termina matando TODOS los quick-actions.exe (idempotente).
-param([ValidateSet("boot","show","tray","close")][string]$Phase = "boot", [int]$WaitSec = 3, [int]$CommandId = 1001)
+param([ValidateSet("boot","show","tray","close")][string]$Phase = "boot", [int]$WaitSec = 3, [int]$CommandId = 1001, [int]$ResizeX = 0, [int]$ResizeY = 0)
 
 $ErrorActionPreference = "Continue"
 $exe   = "C:\quick-actions\quick-actions.exe"
@@ -38,6 +38,7 @@ public class QAW {
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr wp, IntPtr lp);
   [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
 }
 "@
 }
@@ -88,7 +89,13 @@ if ($alive) {
       # render aunque haya un juego fullscreen por encima (CopyFromScreen
       # solo ve el compositor).
       if ($global:mainHwnd -ne [IntPtr]::Zero) {
-        $r2 = New-Object QAW+RECT; [void][QAW]::GetWindowRect($global:mainHwnd, [ref]$r2)
+        if ($ResizeX -gt 0 -and $ResizeY -gt 0) {
+          [void][QAW]::SetWindowPos($global:mainHwnd, [IntPtr]0, 200, 60, $ResizeX, $ResizeY, 0x0040)
+          Start-Sleep -Milliseconds 800
+          $r2 = New-Object QAW+RECT; [void][QAW]::GetWindowRect($global:mainHwnd, [ref]$r2)
+        } else {
+          $r2 = New-Object QAW+RECT; [void][QAW]::GetWindowRect($global:mainHwnd, [ref]$r2)
+        }
         $w = [Math]::Max(1, $r2.R - $r2.L)
         $hh = [Math]::Max(1, $r2.B - $r2.T)
         $bmp2 = New-Object System.Drawing.Bitmap $w, $hh

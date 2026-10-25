@@ -766,6 +766,31 @@ impl QuickActionsApp {
                             );
                             ui.end_row();
                         });
+
+                    // U6: control manual del check (sin polling desde v0.2:
+                    // 1 unica llamada al arrancar; de aca en mas, el usuario
+                    // manda). Feedback garantizado por toast.
+                    ui.add_space(8.0);
+                    if ui.button("Buscar actualizaciones").clicked() {
+                        let _ = self.state.ui_tx.send(UiCommand::SetStatus(
+                            "Buscando actualizaciones...".to_string(),
+                        ));
+                        self.state.repaint();
+                        let repo = cfg.app.repository.clone();
+                        let ui_tx = self.state.ui_tx.clone();
+                        // Check manual en background con feedback SIEMPRE
+                        // (aviso / ultima version / error) — no bloquea UI.
+                        std::thread::spawn(move || {
+                            crate::update_check::run_manual_check(&repo, ui_tx);
+                        });
+                    }
+                    if cfg.app.repository.is_empty() {
+                        ui.label(
+                            egui::RichText::new("Setea primero un repositorio")
+                                .small()
+                                .color(theme::TEXT_DIM),
+                        );
+                    }
                 });
             });
 
