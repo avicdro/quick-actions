@@ -15,8 +15,6 @@ pub struct Config {
     pub hotkeys: HotkeysConfig,
     /// Configuracion de la app en general (auto-arranque, etc).
     pub app: AppConfig,
-    /// Rutas de aplicaciones externas.
-    pub paths: PathsConfig,
     /// Configuracion futura del launcher.
     pub launcher: LauncherConfig,
     /// Configuracion futura de notificaciones.
@@ -182,22 +180,6 @@ impl Default for AppConfig {
     }
 }
 
-/// Rutas a ejecutables externos.
-#[derive(Debug, Deserialize, Clone)]
-#[serde(default)]
-pub struct PathsConfig {
-    /// Ruta al ejecutable de Chrome.
-    pub chrome: String,
-}
-
-impl Default for PathsConfig {
-    fn default() -> Self {
-        Self {
-            chrome: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe".to_string(),
-        }
-    }
-}
-
 /// Configuracion futura del launcher de apps.
 #[derive(Debug, Deserialize, Clone, Default)]
 #[serde(default)]
@@ -291,9 +273,6 @@ help = true
 autostart = false
 check_updates = true
 repository = "avicdro/quick-actions"
-
-[paths]
-chrome = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
 
 [launcher]
 enabled = false
@@ -430,9 +409,6 @@ history_max_entries = 100
 
 [hotkeys]
 enabled = false
-
-[paths]
-chrome = "C:\\chrome.exe"
 
 [launcher]
 enabled = true
@@ -600,5 +576,26 @@ autostart = false
     fn c_of(path: &Path) -> Config {
         let s = std::fs::read_to_string(path).unwrap();
         toml::from_str(&s).unwrap()
+    }
+}
+
+#[cfg(test)]
+mod backward_compat_tests {
+    use super::*;
+
+    // Las configs existentes pueden seguir teniendo `[paths] chrome = ...`
+    // tras remover la feature de Gemini Chrome: las secciones/campos
+    // desconocidos se ignoran al parsear.
+    #[test]
+    fn ignores_stale_paths_section_from_old_configs() {
+        let toml = r#"
+[paths]
+chrome = "C:\\chrome.exe"
+
+[ollama]
+model = "test-model"
+"#;
+        let c: Config = toml::from_str(toml).unwrap();
+        assert_eq!(c.ollama.model, "test-model");
     }
 }

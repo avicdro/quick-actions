@@ -58,16 +58,11 @@ Replicar `ai-suite-ollama.ahk` al 100%:
 - Notificaciones toast nativas de Windows en vez de tooltips simples.
 - System tray icon (actualmente no hay; se planea con `tray-icon` crate).
 
-### Fase 3 — Gemini Chrome
-- `CapsLock + N` → Ventana nueva de Chrome con Gemini.
-- `CapsLock + E` → Pestaña nueva de Chrome con Gemini.
-- Enfocar ventana de Chrome (WinAPI).
-
-### Fase 4 — App Launcher
+### Fase 3 — App Launcher
 - `CapsLock + Q` → Panel flotante con grid de iconos/apps.
 - Click para lanzar. Escape para cerrar.
 
-### Fase 5 — Notifications Overlay
+### Fase 4 — Notifications Overlay
 - Bolitas circulares de Slack/Teams leyendo titulos de ventanas.
 - Click para enfocar la app.
 
@@ -184,9 +179,9 @@ Salida: `target/release/quick-actions.exe`
 
 - [ ] Auto-arranque en Windows (gestion del usuario — acceso directo en shell:startup).
 - [ ] System tray icon (Fase 2).
-- [ ] Ventanas con iconos en el launcher (Fase 4).
-- [ ] Extraer iconos de .exe en Windows (Fase 4).
-- [ ] Bolitas de Slack/Teams (Fase 5).
+- [ ] Ventanas con iconos en el launcher (Fase 3).
+- [ ] Extraer iconos de .exe en Windows (Fase 3).
+- [ ] Bolitas de Slack/Teams (Fase 4).
 
 ---
 
@@ -195,7 +190,6 @@ Salida: `target/release/quick-actions.exe`
 | Script | Estado migracion |
 |--------|-----------------|
 | `ai-suite-ollama.ahk` | ✅ Completo (Fase 1) |
-| `gemini-chrome.ahk` | ⏳ Fase 3 |
-| `app-launcher.ahk` | ⏳ Fase 4 |
-| `notifications-overlay.ahk` | ⏳ Fase 5 |
+| `app-launcher.ahk` | ⏳ Fase 3 |
+| `notifications-overlay.ahk` | ⏳ Fase 4 |
 | `ahk-suite.ahk` | ✅ Reemplazado por `main.rs` |

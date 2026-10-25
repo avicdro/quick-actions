@@ -46,9 +46,6 @@ check_updates = true
 # Repo a consultar (vacio = sin check).
 repository = "avicdro/quick-actions"
 
-[paths]
-chrome = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-
 # Para fases futuras (app-launcher, notifications)
 [launcher]
 enabled = false # Fase 4

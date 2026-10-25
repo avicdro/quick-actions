@@ -74,9 +74,6 @@ window_height = 600
 history_max_entries = 50
 theme = "dark"           # "dark" (default), "light" o "system" (sigue Windows)
 
-[paths]
-chrome = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-
 [app]
 autostart = false        # Auto-arranque con Windows (tambien via tray)
 check_updates = true     # Buscar releases nuevas al arrancar
@@ -115,28 +112,6 @@ cargo build --release
 2. Asegúrate de que Ollama está corriendo
 3. Selecciona texto en cualquier app y usa los atajos
 
-## 🔧 Solución de problemas
-
-### Notificación de NVIDIA ("Pulse Alt+Z") al abrir la GUI
-
-NVIDIA App puede mostrar su toast de superposición sobre `quick-actions.exe`
-porque inyecta su overlay en procesos que presentan una swapchain D3D12/Vulkan
-(aunque la app pinte en la iGPU). No existe API pública para excluirse.
-
-- Reiniciar el PC **no** limpia la detección: vive en
-  `%LOCALAPPDATA%\NVIDIA Corporation\NVIDIA App\NvBackend`. Cierra NVIDIA App
-  del tray, borra esa carpeta y relánzala (se regenera sola).
-- Revisa en NVIDIA App → *Juegos* si existe una entrada para
-  `quick-actions.exe` (elimínala o desactiva la overlay para esa app).
-- El log del app registra el adapter real de wgpu en cada arranque
-  (`wgpu_core::instance`); para un diagnóstico más profundo:
-  `RUST_LOG=wgpu_core=debug,wgpu_hal=debug`.
-
-### Ver qué build estoy corriendo
-
-- Tray → Ayuda/Ajustes → pestaña **Ajustes → App** ("Versión: v0.2.4 (abcdef1)")
-- Primera línea del log `logs/` ("Iniciando Quick Actions v0.2.4 (abcdef1)")
-
 ## 🔖 Versionado
 
 Semver pre-1.0 con reglas propias del proyecto:
@@ -146,14 +121,6 @@ Semver pre-1.0 con reglas propias del proyecto:
 - **`v1.0.0` es una decisión explícita** — se alcanza cuando la base es estable y pulida, nunca automáticamente
 - Cada build incrusta el **commit corto de git** (`vX.Y.Z (abcdef1)`), visible en Ajustes y en el log: la granularidad real entre releases la da el hash, no el número
 - Las tags de release son `vX.Y.Z` (sin ceros a la izquierda ni sufijos: `parse_version` del update-check espera ese formato)
-
-## 🗺️ Roadmap
-
-- [x] Fase 1 — AI Suite Ollama (MVP)
-- [x] Fase 2 — Historial persistente, tray icon, toasts
-- [ ] Fase 3 — Gemini Chrome (nueva ventana/pestaña)
-- [ ] Fase 4 — App Launcher (panel flotante)
-- [ ] Fase 5 — Notifications Overlay (Slack/Teams)
 
 ## 📄 Licencia
 
