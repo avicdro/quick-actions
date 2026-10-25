@@ -1,4 +1,5 @@
-use std::sync::{mpsc::Sender, OnceLock};
+use std::sync::atomic::AtomicBool;
+use std::sync::{mpsc::Sender, Arc};
 
 /// Comandos que pueden enviarse desde el hook de teclado al thread principal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,16 +83,6 @@ pub fn is_hotkey_enabled(cmd: HotkeyCommand, cfg: &crate::config::HotkeysConfig)
     }
 }
 
-/// Nombre legible del modificador configurado ("CapsLock" / "Alt") para
-/// textos, toasts y menus.
-#[must_use]
-pub fn modifier_name() -> &'static str {
-    match modifier() {
-        Modifier::CapsLock => "CapsLock",
-        Modifier::Alt => "Alt",
-    }
-}
-
 /// Tecla modificadora de los atajos.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modifier {
@@ -107,6 +98,15 @@ impl Modifier {
         match raw.trim().to_ascii_lowercase().as_str() {
             "alt" => Self::Alt,
             _ => Self::CapsLock,
+        }
+    }
+
+    /// Nombre legible ("CapsLock" / "Alt") para textos, toasts y menus.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::CapsLock => "CapsLock",
+            Self::Alt => "Alt",
         }
     }
 }
@@ -130,70 +130,33 @@ impl CapsMode {
     }
 }
 
-static MODIFIER: OnceLock<Modifier> = OnceLock::new();
-static CAPS_MODE: OnceLock<CapsMode> = OnceLock::new();
-
-/// Configura modificador y modo de CapsLock (de `HotkeysConfig`).
-///
-/// Debe llamarse **antes** de [`start_listener`]; si no, quedan defaults.
-pub fn init_caps(modifier: Modifier, caps_mode: CapsMode) {
-    let _ = MODIFIER.set(modifier);
-    let _ = CAPS_MODE.set(caps_mode);
-}
-
-/// Modificador vigente (defaults si nadie llamó [`init_caps`]).
-pub fn modifier() -> Modifier {
-    MODIFIER.get().copied().unwrap_or(Modifier::CapsLock)
-}
-
-/// Modo de CapsLock vigente (defaults si nadie llamó [`init_caps`]).
-pub fn caps_mode() -> CapsMode {
-    CAPS_MODE.get().copied().unwrap_or(CapsMode::Hold)
-}
-
-/// Inicializa el canal global para que el hook pueda enviar comandos.
-///
-/// Debe llamarse **antes** de [`start_listener`].
-pub fn init_sender(sender: Sender<HotkeyCommand>) {
-    #[cfg(windows)]
-    win_hook::init_sender(sender);
-
-    #[cfg(not(windows))]
-    {
-        let _ = sender;
-    }
-}
-
-/// Registra el flag compartido de pausa (ver [`crate::ui::UiCommand::SetPaused`]).
-///
-/// Debe llamarse **antes** de [`start_listener`].
-pub fn init_suspended(flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {
-    #[cfg(windows)]
-    win_hook::init_suspended(flag);
-
-    #[cfg(not(windows))]
-    {
-        let _ = flag;
-    }
-}
-
 /// Inicia el listener de atajos globales en un thread dedicado.
+///
+/// Fase 1.3: TODO el estado se inyecta aqui — el hook ya no usa statics
+/// (`SENDER`/`SUSPENDED`/`MODIFIER`/`CAPS_MODE` eliminados). El modificador
+/// y el capsmode se capturan al arrancar (cambiarlos exige reinicio; en la
+/// pestana Ajustes se avisa del reinicio).
 ///
 /// # Platform
 ///
 /// Solo Windows. Usa `WH_KEYBOARD_LL` (low-level keyboard hook).
-///
-/// [`init_sender`] debe haberse llamado previamente.
-pub fn start_listener() {
+pub fn start_listener(
+    sender: Sender<HotkeyCommand>,
+    suspended: Arc<AtomicBool>,
+    modifier: Modifier,
+    caps_mode: CapsMode,
+    repaint: crate::ui_protocol::RepaintFn,
+) {
     #[cfg(windows)]
     {
         std::thread::spawn(move || {
-            win_hook::run_hook_loop();
+            win_hook::run_hook_loop(sender, suspended, modifier, caps_mode, repaint);
         });
     }
 
     #[cfg(not(windows))]
     {
+        let _ = (sender, suspended, modifier, caps_mode, repaint);
         tracing::warn!("Hotkeys no soportados en esta plataforma.");
     }
 }

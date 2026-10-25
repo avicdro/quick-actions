@@ -71,34 +71,42 @@ sin UI.
 
 ---
 
-### 1.3 Eliminar estado global (`OnceLock`)
+### 1.3 Eliminar estado global (`OnceLock`) ✅
 
-- [ ] Crear `src/app_state.rs` — struct `AppState` con lo compartido real (post P1–P7):
+- [x] Crear `src/app_state.rs` — struct `AppState` con lo compartido real (post P1–P7):
   ```rust
   pub struct AppState {
       pub config: Arc<RwLock<Config>>,             // hot-reload (P3)
+      pub config_path: PathBuf,                    // persistencia toml_edit (U4)
       pub suspendido: Arc<AtomicBool>,             // P2: pausa hotkeys
       pub clipboard: Arc<ClipboardManager>,
       pub history: Arc<Mutex<History>>,
-      pub ollama: Arc<OllamaClient>,
       pub ollama_models: Arc<RwLock<Vec<String>>>, // cache submenu modelo (P3)
+      pub models_fetching: Arc<AtomicBool>,        // guardia anti-refetch
       pub ui_tx: Sender<UiCommand>,
-      pub action_handler: Arc<dyn ActionHandler>,
-      pub runtime: Arc<Runtime>,                   // o &Runtime
+      pub ui_ctx: Arc<OnceLock<egui::Context>>,    // cablea en 1er frame
+      pub repaint: RepaintFn,                      // ex `ui::request_repaint`
+      pub hook_modifier / hook_capsmode,           // P7: aplicado al arrancar
   }
   ```
-- [ ] Pasar `Arc<AppState>` a: `QuickActionsApp`, hotkeys thread, tray thread, workers
-- [ ] Eliminar `SENDER` en `win_hook.rs` → pasar sender por closure en `start_listener(sender)`
-- [ ] Eliminar `SUSPENDED` en `win_hook.rs` (P2) → inyectar el `Arc<AtomicBool>` por `start_listener`
-- [ ] Eliminar `MODIFIER`/`CAPS_MODE` en `hotkeys/mod.rs` (P7) → capturados al crear el listener (config de arranque, no requieren hot-reload)
-- [ ] `LATCHED`/`SWALLOW_CAPS_UP` en `win_hook.rs` (P7): encapsular en el estado del thread del hook o mantener como statics documentados dentro del módulo — decidir al implementar
-- [ ] Eliminar `CONTEXT` en `ui.rs` → pasar `egui::Context` por parámetro o canal
-- [ ] Eliminar `TRAY_DATA` en `tray.rs` → pasar datos en closure de `init_tray`
-- [ ] Mantener `RUNTIME` en `runtime.rs` (aceptable) o mover a `AppState`
+  `action_handler` falta hasta 1.2; `RepaintFn` vive en `ui_protocol` (cross).
+- [x] Pasar `Arc<AppState>` a: `QuickActionsApp`, hotkeys thread, tray thread, workers
+- [x] Eliminar `SENDER` en `win_hook.rs` → inyectado por `start_listener(sender, ...)`
+- [x] Eliminar `SUSPENDED` en `win_hook.rs` (P2) → inyectado por `start_listener`
+- [x] Eliminar `MODIFIER`/`CAPS_MODE` en `hotkeys/mod.rs` (P7) → capturados al crear el listener: params de `start_listener` + snapshot en `AppState::hook_modifier`/`hook_capsmode`
+- [x] `LATCHED`/`SWALLOW_CAPS_UP` en `win_hook.rs` (P7) → encapsulados en `HookState` (struct del thread del hook en `thread_local`; los callbacks extern "system" no pueden capturar y los eventos LL llegan en el thread del pump, así que el thread-local es su sitio natural)
+- [x] Eliminar `CONTEXT` en `ui.rs` → `AppState.ui_ctx` (per-instancia, cableada en el primer frame por el propio App) + `RepaintFn` inyectada a hook/tray/workers
+- [x] Eliminar `TRAY_DATA` en `tray.rs` → el wnd proc recibe el estado via `GWLP_USERDATA` (canonico Win32; leak intencional, el tray vive hasta el exit)
+- [x] Mantener `RUNTIME` en `runtime.rs` (aceptable, per plan)
 
-**Criterio de aceptación**: Cero `OnceLock` en código de negocio y todo
+**Criterio de aceptación**: Cero `OnceLock` en código de negocio ✅ y todo
 inyectado; los statics restantes del hook (latch P7) quedan encapsulados y
-documentados en `win_hook`.
+documentados en `win_hook` ✅ (`HOOK_STATE`, thread-local de su thread).
+
+**Extra de la pasada**: `refresh_models()` movido de `tray.rs` a
+`AppState::spawn_models_refresh()` (la pestana Ajustes ya no llama al tray) y
+`KeySimulator::copy/paste/select_all` reciben el `Modifier` por parametro
+(observaba el static eliminado para soltar el modificador fisico).
 
 ---
 
@@ -296,6 +304,7 @@ graph TD
 | 2026-10-18 | P | P6 icono tray propio embebido: `build.rs` windres → `.rsrc` linkeado directo | `1cbf6cc` | exe + Explorer |
 | 2026-10-18 | P | P7 CapsLock como modificador configurable (hold/toggle) | `05b9226` | hotkeys cross → 31 tests |
 | 2026-10-19 | — | Doc actualizado al estado post-P1–P7 | *(commit docs)* | AppState sketch real, 5.8 hecho |
+| 2026-10-25 | 1 | 1.3 AppState: elimina statics OnceLock (SENDER/SUSPENDED/MODIFIER/CAPS_MODE/CONTEXT/TRAY_DATA/LATCHED) → inyección via `start_listener` + `GWLP_USERDATA` del tray + `HookState` thread-local | *(esta pasada)* | refresh_models y RepaintFn migrados a AppState/ui_protocol |
 
 ---
 

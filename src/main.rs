@@ -26,10 +26,11 @@ fn windows_main() {
     use std::sync::mpsc::channel;
     use std::sync::{Arc, Mutex, RwLock};
 
+    use quick_actions::app_state::AppState;
     use quick_actions::clipboard::ClipboardManager;
     use quick_actions::config::Config;
     use quick_actions::history::History;
-    use quick_actions::hotkeys::{init_sender, start_listener, HotkeyCommand};
+    use quick_actions::hotkeys::{CapsMode, HotkeyCommand, Modifier};
     use quick_actions::tray::init_tray;
     use quick_actions::ui::{QuickActionsApp, UiChannels};
 
@@ -93,7 +94,10 @@ fn windows_main() {
     // Flag compartido de pausa de atajos (tray <-> hook) — P2.
     let suspended = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    // === 4. Inicializar clipboard e historial ===
+    // === 4. Inicializar clipboard, historial y AppState (fase 1.3) ===
+    // El AppState empaqueta todo lo compartido: config hot-reloadable, ruta
+    // del config.toml, pausa, clipboard, historial, cache de modelos, canal
+    // UI y el repaint del UI (cablea el egui::Context en el primer frame).
     let clipboard = match ClipboardManager::new() {
         Ok(c) => Arc::new(c),
         Err(e) => {
@@ -103,31 +107,6 @@ fn windows_main() {
             std::process::exit(1);
         }
     };
-
-    // === 4. Inicializar clipboard e historial ===
-    // Cache de modelos para el submenu del tray (llena en background — P3).
-    let ollama_models = Arc::new(Mutex::new(Vec::<String>::new()));
-
-    {
-        let models_cache = Arc::clone(&ollama_models);
-        let config_snapshot = config.read().ok().map(|c| c.ollama.clone());
-        if let Some(ollama_config) = config_snapshot {
-            std::thread::spawn(move || {
-                let runtime = quick_actions::runtime::global();
-                match runtime.block_on(quick_actions::ollama::OllamaClient::list_models(
-                    &ollama_config,
-                )) {
-                    Ok(models) => {
-                        tracing::info!("Ollama: {} modelos instalados", models.len());
-                        *models_cache.lock().unwrap_or_else(|e| e.into_inner()) = models;
-                    }
-                    Err(e) => {
-                        tracing::warn!("No se pudo listar modelos de Ollama: {e}");
-                    }
-                }
-            });
-        }
-    }
 
     let history_max_entries = config
         .read()
@@ -143,55 +122,61 @@ fn windows_main() {
         }
     };
 
-    // === 5. Iniciar tray icon (thread dedicado) ===
-    let ui_tx_for_tray = ui_channels.tx.clone();
-    let config_path_for_tray = exe_dir.join("config.toml");
-    init_tray(
-        ui_tx_for_tray,
-        config_path_for_tray.clone(),
-        Arc::clone(&suspended),
-        Arc::clone(&config),
-        Arc::clone(&ollama_models),
-    );
-    tracing::info!("Tray icon iniciado.");
+    let config_path = exe_dir.join("config.toml");
 
-    // === 5.5. Check de updates (background, no bloquea) — P4 ===
-    if let Some(app_config) = config.read().ok().map(|c| c.app.clone()) {
-        quick_actions::update_check::spawn_check(&app_config, ui_channels.tx.clone());
-    }
-
-    // === 6. Iniciar hook de teclado (thread dedicado) ===
-    init_sender(hotkey_tx);
-    quick_actions::hotkeys::init_suspended(Arc::clone(&suspended));
-    // P7: modificador + capsmode desde config (leer antes del listener).
+    // Fase 1.3: modificador/capsmode APLICADOS — snapshot de la config de
+    // arranque (el hook NO la relee en caliente; cambiarlos exige reinicio).
     let hk_cfg = config
         .read()
         .ok()
         .map(|c| c.hotkeys.clone())
         .unwrap_or_default();
-    quick_actions::hotkeys::init_caps(
-        quick_actions::hotkeys::Modifier::from_config(&hk_cfg.modifier),
-        quick_actions::hotkeys::CapsMode::from_config(&hk_cfg.capsmode),
+
+    let state = Arc::new(AppState::new(
+        Arc::clone(&config),
+        config_path.clone(),
+        Arc::clone(&suspended),
+        Arc::clone(&clipboard),
+        Arc::clone(&history),
+        // Cache de modelos para el submenu del tray y Ajustes (P3); se
+        // llena en background justo despues (spawn_models_refresh).
+        Arc::new(std::sync::RwLock::new(Vec::<String>::new())),
+        ui_channels.tx.clone(),
+        Modifier::from_config(&hk_cfg.modifier),
+        CapsMode::from_config(&hk_cfg.capsmode),
+    ));
+
+    // Cache de modelos: refetch en background (P3).
+    state.spawn_models_refresh();
+
+    // === 5. Iniciar tray icon (thread dedicado) ===
+    init_tray(Arc::clone(&state));
+    tracing::info!("Tray icon iniciado.");
+
+    // === 5.5. Check de updates (background, no bloquea) — P4 ===
+    if let Some(app_config) = state.config_snapshot().map(|c| c.app) {
+        quick_actions::update_check::spawn_check(&app_config, ui_channels.tx.clone());
+    }
+
+    // === 6. Iniciar hook de teclado (thread dedicado) — fase 1.3: todo
+    // inyectado, sin init_* ni statics (SENDER/SUSPENDED/MODIFIER/CAPS_MODE
+    // eliminados; el modificador aplicado ya vive en AppState y en el
+    // estado del thread del hook).
+    quick_actions::hotkeys::start_listener(
+        hotkey_tx,
+        Arc::clone(&suspended),
+        Modifier::from_config(&hk_cfg.modifier),
+        CapsMode::from_config(&hk_cfg.capsmode),
+        Arc::clone(&state.repaint),
     );
-    start_listener();
     tracing::info!(
         "Hotkeys iniciados. Modificador '{}' + G/T/R/Enter/V/H listos.",
         hk_cfg.modifier
     );
 
     // === 7. Iniciar eframe en el thread principal (requerido por Windows) ===
-    // Pasamos el hotkey_rx y los datos compartidos al App.
-    // El App procesara hotkeys en cada frame (cada 100ms).
-    let app = QuickActionsApp::new(
-        ui_channels.rx,
-        hotkey_rx,
-        Arc::clone(&config),
-        Arc::clone(&clipboard),
-        Arc::clone(&history),
-        ui_channels.tx.clone(),
-        Arc::clone(&ollama_models),
-        config_path_for_tray.clone(),
-    );
+    // El App solo necesita los canales y el AppState compartido.
+    let app = QuickActionsApp::new(ui_channels.rx, hotkey_rx, Arc::clone(&state));
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()

@@ -1,6 +1,15 @@
+//! Hook de teclado de bajo nivel (WH_KEYBOARD_LL) — Windows.
+//!
+//! Fase 1.3: sin statics. Todo el estado vive en un `HookState` de este
+//! thread: los callbacks `extern "system"` no pueden capturar (contrato C
+//! de HOOKPROC) y `SetWindowsHookExW` no permite pasar datos de usuario a
+//! WH_KEYBOARD_LL, pero Windows entrega los eventos del LL hook EN el
+//! thread que lo instala (por eso el thread necesita message pump), asi
+//! que el `thread_local` de ese thread es el sitio natural.
+
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Sender;
-use std::sync::{Arc, OnceLock};
+use std::sync::{mpsc, Arc};
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -10,42 +19,35 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::hotkeys::{CapsMode, HotkeyCommand, Modifier};
-
-/// Canal global para enviar comandos desde el hook al thread principal.
-static SENDER: OnceLock<Sender<HotkeyCommand>> = OnceLock::new();
-
-/// Cuando es `true`, el hook hace passthrough total de TODO el teclado
-/// (no intercepta atajos). Toggle desde el tray ("Pausar" — P2).
-static SUSPENDED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
-
-/// Latch del modo `toggle` (P7): tap de CapsLock lo enciende; la proxima
-/// tecla de atajo dispara y lo apaga; cualquier otra tecla lo apaga.
-static LATCHED: AtomicBool = AtomicBool::new(false);
-
-/// En modo toggle nos comemos el keydown de CapsLock: tambien hay que
-/// comerse su keyup para no dejar colado un up de una down que nunca
-/// llego al sistema.
-static SWALLOW_CAPS_UP: AtomicBool = AtomicBool::new(false);
+use crate::ui_protocol::RepaintFn;
 
 const VK_CAPITAL: u32 = 0x14; // CapsLock
 const VK_MENU: u32 = 0x12; // Alt key
 
-/// Inicializa el sender global. Debe llamarse antes de [`run_hook_loop`].
-pub fn init_sender(sender: Sender<HotkeyCommand>) {
-    let _ = SENDER.set(sender);
+/// Estado del thread del hook (ver doc del modulo).
+struct HookState {
+    /// Canal hacia el thread principal (hotkey -> app).
+    sender: mpsc::Sender<HotkeyCommand>,
+    /// P2: `true` = passthrough total de TODO el teclado (toggle tray).
+    suspended: Arc<AtomicBool>,
+    /// P7: modificador configurado (capturado al arrancar).
+    modifier: Modifier,
+    /// P7: modo del CapsLock (capturado al arrancar).
+    caps_mode: CapsMode,
+    /// Latch del modo `toggle` (P7): tap de CapsLock lo enciende; la proxima
+    /// tecla de atajo dispara y lo apaga; cualquier otra tecla lo apaga.
+    /// Plain bool: solo lo toca este thread (unico acceso por frame).
+    latched: bool,
+    /// En modo toggle nos comemos el keydown de CapsLock: tambien hay que
+    /// comerse su keyup para no dejar colado un up de una down que nunca
+    /// llego al sistema.
+    swallow_caps_up: bool,
+    /// Despierta el event loop del UI cuando se dispara un atajo.
+    repaint: RepaintFn,
 }
 
-/// Registra el flag compartido de pausa. Antes de [`run_hook_loop`].
-pub fn init_suspended(flag: Arc<AtomicBool>) {
-    let _ = SUSPENDED.set(flag);
-}
-
-fn get_sender() -> Option<&'static Sender<HotkeyCommand>> {
-    SENDER.get()
-}
-
-fn is_suspended() -> bool {
-    SUSPENDED.get().is_some_and(|f| f.load(Ordering::Relaxed))
+thread_local! {
+    static HOOK_STATE: RefCell<Option<HookState>> = const { RefCell::new(None) };
 }
 
 /// Tabla de teclas mapeadas: vk -> comando.
@@ -61,14 +63,46 @@ fn mapped_command(vk_code: u32) -> Option<HotkeyCommand> {
     }
 }
 
+/// Pasa el evento al siguiente hook de la cadena.
+fn pass_through(n_code: i32, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
+    // SAFETY: contrato del hook de Windows para eventos no procesados.
+    unsafe { CallNextHookEx(None, n_code, w_param, l_param) }
+}
+
 /// Inicia el message pump con el hook de teclado de bajo nivel.
 ///
 /// Bloquea el thread actual. Debe ejecutarse en un thread dedicado.
-pub fn run_hook_loop() {
-    if SENDER.get().is_none() {
-        tracing::error!("Sender no inicializado. Llama a init_sender() antes de run_hook_loop().");
-        return;
-    }
+///
+/// Fase 1.3: recibe el estado inyectado (antes las init_* + statics).
+pub fn run_hook_loop(
+    sender: mpsc::Sender<HotkeyCommand>,
+    suspended: Arc<AtomicBool>,
+    modifier: Modifier,
+    caps_mode: CapsMode,
+    repaint: RepaintFn,
+) {
+    let (mod_name, mode_desc) = match modifier {
+        Modifier::CapsLock => match caps_mode {
+            CapsMode::Hold => ("CapsLock", "hold: mantener + tecla"),
+            CapsMode::Toggle => ("CapsLock", "toggle: tap queda latched"),
+        },
+        Modifier::Alt => ("Alt", "hold: mantener + tecla"),
+    };
+    tracing::info!(
+        "Hook de teclado instalándose. Modificador: {mod_name} ({mode_desc}). Atajos: +G/T/R/Enter/V/H"
+    );
+
+    HOOK_STATE.with_borrow_mut(|slot| {
+        *slot = Some(HookState {
+            sender,
+            suspended,
+            modifier,
+            caps_mode,
+            latched: false,
+            swallow_caps_up: false,
+            repaint,
+        });
+    });
 
     // SAFETY: SetWindowsHookExW con WH_KEYBOARD_LL instala un hook global.
     // - `None` para hmod es correcto para hooks globales (low-level).
@@ -84,17 +118,6 @@ pub fn run_hook_loop() {
                 return;
             }
         };
-
-    let (mod_name, mode_desc) = match crate::hotkeys::modifier() {
-        Modifier::CapsLock => match crate::hotkeys::caps_mode() {
-            CapsMode::Hold => ("CapsLock", "hold: mantener + tecla"),
-            CapsMode::Toggle => ("CapsLock", "toggle: tap queda latched"),
-        },
-        Modifier::Alt => ("Alt", "hold: mantener + tecla"),
-    };
-    tracing::info!(
-        "Hook de teclado instalado. Modificador: {mod_name} ({mode_desc}). Atajos: +G/T/R/Enter/V/H"
-    );
 
     // SAFETY: GetMessageW bloquea hasta que llega un mensaje.
     // El loop termina cuando GetMessageW devuelve false (WM_QUIT).
@@ -128,13 +151,27 @@ extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_param: LPARAM) 
         return unsafe { CallNextHookEx(None, n_code, w_param, l_param) };
     }
 
+    // try_with: si este callback somehow correra en otro thread (no debe),
+    // mejor passthrough que panic.
+    HOOK_STATE
+        .try_with(|slot| {
+            let mut slot = slot.borrow_mut();
+            match slot.as_mut() {
+                None => pass_through(n_code, w_param, l_param),
+                Some(state) => handle_event(state, n_code, w_param, l_param),
+            }
+        })
+        .unwrap_or_else(|_| pass_through(n_code, w_param, l_param))
+}
+
+/// Logica del evento con el estado del thread del hook (fase 1.3).
+fn handle_event(state: &mut HookState, n_code: i32, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
     // Pausado (P2): passthrough total, como si el hook ni estuviera.
     // De paso reseteamos el latch para no revivir estados viejos.
-    if is_suspended() {
-        LATCHED.store(false, Ordering::Relaxed);
-        SWALLOW_CAPS_UP.store(false, Ordering::Relaxed);
-        // SAFETY: Pasar el evento al siguiente hook de la cadena.
-        return unsafe { CallNextHookEx(None, n_code, w_param, l_param) };
+    if state.suspended.load(Ordering::Relaxed) {
+        state.latched = false;
+        state.swallow_caps_up = false;
+        return pass_through(n_code, w_param, l_param);
     }
 
     // SAFETY: l_param apunta a un KBDLLHOOKSTRUCT valido proporcionado por
@@ -149,80 +186,81 @@ extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_param: LPARAM) 
     // driver de teclado. Es seguro de llamar desde cualquier thread.
     let key_held = |vk: u32| unsafe { (GetAsyncKeyState(vk as i32) as u16) & 0x8000 != 0 };
 
-    match crate::hotkeys::modifier() {
+    match state.modifier {
         Modifier::Alt => {
             // Comportamiento previo a P7: solo keydown con Alt presionado.
             if !is_keydown {
-                return unsafe { CallNextHookEx(None, n_code, w_param, l_param) };
+                return pass_through(n_code, w_param, l_param);
             }
             if !key_held(VK_MENU) {
-                return unsafe { CallNextHookEx(None, n_code, w_param, l_param) };
+                return pass_through(n_code, w_param, l_param);
             }
             if let Some(cmd) = mapped_command(vk_code) {
-                fire_command(cmd);
+                fire_command(state, cmd);
                 return LRESULT(1);
             }
-            unsafe { CallNextHookEx(None, n_code, w_param, l_param) }
+            pass_through(n_code, w_param, l_param)
         }
 
-        Modifier::CapsLock if crate::hotkeys::caps_mode() == CapsMode::Hold => {
+        Modifier::CapsLock if state.caps_mode == CapsMode::Hold => {
             // CapsLock pasa intacto al sistema (alterna mayusculas); solo
             // keydown de tecla_atajo con CapsLock fisicamente presionado.
             if !is_keydown || vk_code == VK_CAPITAL {
-                return unsafe { CallNextHookEx(None, n_code, w_param, l_param) };
+                return pass_through(n_code, w_param, l_param);
             }
             if !key_held(VK_CAPITAL) {
-                return unsafe { CallNextHookEx(None, n_code, w_param, l_param) };
+                return pass_through(n_code, w_param, l_param);
             }
             if let Some(cmd) = mapped_command(vk_code) {
-                fire_command(cmd);
+                fire_command(state, cmd);
                 return LRESULT(1);
             }
-            unsafe { CallNextHookEx(None, n_code, w_param, l_param) }
+            pass_through(n_code, w_param, l_param)
         }
 
         // CapsLock + toggle
         Modifier::CapsLock if vk_code == VK_CAPITAL => {
             if is_keydown {
                 // Primer tap: latch. Segundo tap: apaga.
-                if LATCHED.swap(false, Ordering::Relaxed) {
+                if state.latched {
+                    state.latched = false;
                     tracing::debug!("CapsLock toggle: latch apagado (2do tap).");
                 } else {
-                    LATCHED.store(true, Ordering::Relaxed);
+                    state.latched = true;
                 }
-                SWALLOW_CAPS_UP.store(true, Ordering::Relaxed);
+                state.swallow_caps_up = true;
                 // Consumimos el keydown: el sistema nunca alterna mayusculas.
                 return LRESULT(1);
             }
-            if is_keyup && SWALLOW_CAPS_UP.swap(false, Ordering::Relaxed) {
+            if is_keyup && state.swallow_caps_up {
+                state.swallow_caps_up = false;
                 return LRESULT(1);
             }
-            unsafe { CallNextHookEx(None, n_code, w_param, l_param) }
+            pass_through(n_code, w_param, l_param)
         }
 
         // CapsLock + toggle: teclas normales
         Modifier::CapsLock => {
             if !is_keydown {
-                return unsafe { CallNextHookEx(None, n_code, w_param, l_param) };
+                return pass_through(n_code, w_param, l_param);
             }
-            let was_latched = LATCHED.swap(false, Ordering::Relaxed);
+            let was_latched = std::mem::take(&mut state.latched);
             if was_latched {
                 if let Some(cmd) = mapped_command(vk_code) {
                     // La tecla latcheada dispara y apaga el latch.
-                    fire_command(cmd);
+                    fire_command(state, cmd);
                     return LRESULT(1);
                 }
                 // Tecla no mapeada: apaga el latch y pasa al sistema
                 // (seguimos escribiendo en la app normalmente).
             }
-            unsafe { CallNextHookEx(None, n_code, w_param, l_param) }
+            pass_through(n_code, w_param, l_param)
         }
     }
 }
 
-fn fire_command(cmd: HotkeyCommand) {
-    if let Some(sender) = get_sender() {
-        let _ = sender.send(cmd);
-    }
-    crate::ui::request_repaint();
+fn fire_command(state: &mut HookState, cmd: HotkeyCommand) {
+    let _ = state.sender.send(cmd);
+    // Despertar el event loop del UI (antes: static CONTEXT + ui::request_repaint).
+    (state.repaint)();
 }

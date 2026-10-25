@@ -3,9 +3,8 @@
 //! Implementacion directa usando Shell_NotifyIconW + TrackPopupMenu.
 //! No depende de crates externas de tray.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::HBRUSH;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -14,15 +13,16 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW,
-    GetCursorPos, GetMessageW, LoadIconW, LoadImageW, PostQuitMessage, RegisterClassExW,
-    SetForegroundWindow, ShowWindow, TrackPopupMenu, TranslateMessage, HICON, IDC_ARROW,
-    IDI_APPLICATION, IMAGE_ICON, LR_DEFAULTSIZE, LR_SHARED, MF_CHECKED, MF_SEPARATOR, MF_STRING,
-    MSG, SW_HIDE, TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON,
-    TRACK_POPUP_MENU_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE, WM_COMMAND, WM_DESTROY, WM_LBUTTONUP,
-    WM_QUIT, WM_RBUTTONUP, WM_USER, WNDCLASSEXW,
+    GetCursorPos, GetMessageW, GetWindowLongPtrW, LoadIconW, LoadImageW, PostQuitMessage,
+    RegisterClassExW, SetForegroundWindow, SetWindowLongPtrW, ShowWindow, TrackPopupMenu,
+    TranslateMessage, GWLP_USERDATA, HICON, IDC_ARROW, IDI_APPLICATION, IMAGE_ICON, LR_DEFAULTSIZE,
+    LR_SHARED, MF_CHECKED, MF_SEPARATOR, MF_STRING, MSG, SW_HIDE, TPM_LEFTALIGN, TPM_NONOTIFY,
+    TPM_RETURNCMD, TPM_RIGHTBUTTON, TRACK_POPUP_MENU_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE,
+    WM_COMMAND, WM_DESTROY, WM_LBUTTONUP, WM_QUIT, WM_RBUTTONUP, WM_USER, WNDCLASSEXW,
 };
 
-use crate::ui::UiCommand;
+use crate::app_state::AppState;
+use crate::ui_protocol::UiCommand;
 
 const WM_TRAYICON: u32 = WM_USER + 1;
 const ID_TRAY_SHOW_HELP: u32 = 1001;
@@ -52,26 +52,33 @@ fn atajo_index_for_id(id: u32) -> Option<usize> {
     }
 }
 
-/// Datos globales del tray icon (solo hay una instancia).
+/// Datos del tray cableados al wnd_proc (fase 1.3).
+///
+/// El `tray_wnd_proc` es `extern "system"` y no puede capturar nada, y
+/// WH_KEYBOARD_LL-style globals no hacen falta: se le pasa el estado a la
+/// ventana via `GWLP_USERDATA` (el truco canonico de Win32 para wnd procs).
 struct TrayData {
-    ui_tx: Sender<UiCommand>,
-    config_path: std::path::PathBuf,
-    suspended: Arc<AtomicBool>,
-    config: Arc<RwLock<crate::config::Config>>,
-    ollama_models: Arc<Mutex<Vec<String>>>,
-    /// Guardia anti-refetch-duplicado (true = refetch en curso).
-    models_fetching: Arc<std::sync::atomic::AtomicBool>,
+    state: Arc<AppState>,
 }
 
-static TRAY_DATA: OnceLock<TrayData> = OnceLock::new();
+/// Recupera el estado cableado en la ventana del tray (None si aun no
+/// se cableo, p.ej. en mensajes tempranos del wnd proc).
+fn tray_state(hwnd: HWND) -> Option<&'static TrayData> {
+    let raw = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) };
+    if raw == 0 {
+        return None;
+    }
+    // SAFETY: el puntero se apunto con Box::leak en run_tray_loop, que
+    // vive hasta el fin del proceso (el tray nunca se destruye antes).
+    Some(unsafe { &*(raw as *const TrayData) })
+}
 
 /// Actions del submenu de atajos (U3): toggle individual o all-or-none.
 ///
 /// Persiste en `[hotkeys]` via toml_edit y aplica en el `RwLock` compartido
 /// para efecto inmediato (sin reinicio). Feedback con toast Notice.
-fn handle_atajos_menu(id: u32) {
-    let Some(data) = TRAY_DATA.get() else { return };
-    let hk_now = data.config.read().ok().map(|c| c.hotkeys.clone());
+fn handle_atajos_menu(state: &AppState, id: u32) {
+    let hk_now = state.config.read().ok().map(|c| c.hotkeys.clone());
     let Some(hk_now) = hk_now else { return };
 
     let changes: Vec<(crate::hotkeys::HotkeyCommand, bool)> = if id == ID_ATAJOS_TODOS {
@@ -94,15 +101,15 @@ fn handle_atajos_menu(id: u32) {
     // Persistir y aplicar; el primer fallo corta el resto.
     for (cmd, on) in &changes {
         if let Err(e) =
-            crate::config::Config::write_hotkey(&data.config_path, cmd.config_field(), *on)
+            crate::config::Config::write_hotkey(&state.config_path, cmd.config_field(), *on)
         {
             tracing::warn!("No se pudo persistir [hotkeys] {}: {e}", cmd.config_field());
             let msg = format!("Error: ajuste '{}' no guardado", cmd.config_field());
-            let _ = data.ui_tx.send(UiCommand::SetStatus(msg));
-            crate::ui::request_repaint();
+            let _ = state.ui_tx.send(UiCommand::SetStatus(msg));
+            state.repaint();
             return;
         }
-        if let Ok(mut c) = data.config.write() {
+        if let Ok(mut c) = state.config.write() {
             *crate::hotkeys::hotkey_switch(*cmd, &mut c.hotkeys) = *on;
         }
     }
@@ -112,7 +119,7 @@ fn handle_atajos_menu(id: u32) {
         let (cmd, on) = changes[0];
         format!(
             "Atajo '{}+{}' {}",
-            crate::hotkeys::modifier_name(),
+            state.hook_modifier.name(),
             cmd.key_label(),
             if on { "activado" } else { "desactivado" }
         )
@@ -120,41 +127,35 @@ fn handle_atajos_menu(id: u32) {
         let on_count = changes.iter().filter(|(_, on)| *on).count();
         format!("Atajos: {on_count}/{} activados", changes.len())
     };
-    let _ = data.ui_tx.send(UiCommand::SetStatus(msg));
-    crate::ui::request_repaint();
+    let _ = state.ui_tx.send(UiCommand::SetStatus(msg));
+    state.repaint();
     tracing::info!("Menu atajos: {} cambio(s) aplicado(s).", changes.len());
 }
 
 /// Toggle pausa de atajos (compartido por WM_COMMAND y TPM_RETURNCMD).
 /// Alterna el flag compartido y avisa al UI (toast persistente).
-fn toggle_pause() {
-    if let Some(data) = TRAY_DATA.get() {
-        let next = !data.suspended.load(Ordering::Relaxed);
-        data.suspended.store(next, Ordering::Relaxed);
-        let _ = data.ui_tx.send(UiCommand::SetPaused(next));
-        crate::ui::request_repaint();
-        tracing::info!(
-            "Atajos {} desde el tray.",
-            if next { "PAUSADOS" } else { "REACTIVADOS" }
-        );
-    }
+fn toggle_pause(state: &AppState) {
+    let next = !state.suspendido.load(Ordering::Relaxed);
+    state.suspendido.store(next, Ordering::Relaxed);
+    let _ = state.ui_tx.send(UiCommand::SetPaused(next));
+    state.repaint();
+    tracing::info!(
+        "Atajos {} desde el tray.",
+        if next { "PAUSADOS" } else { "REACTIVADOS" }
+    );
 }
 
 /// Cambia el modelo de Ollama (P3): persiste en config.toml y hot-reload
 /// a la config compartida (las proximas acciones usan el nuevo ya).
-fn set_ollama_model(model: &str) {
-    let Some(data) = TRAY_DATA.get() else {
-        return;
-    };
-
+fn set_ollama_model(state: &AppState, model: &str) {
     // 1. Persistir config.toml (toml_edit preserva comentarios/formato)
-    if let Err(e) = crate::config::Config::write_ollama_model(&data.config_path, model) {
+    if let Err(e) = crate::config::Config::write_ollama_model(&state.config_path, model) {
         tracing::error!("No se pudo persistir modelo en config.toml: {e}");
         return;
     }
 
     // 2. Actualizar la config en memoria (hot-reload)
-    match data.config.write() {
+    match state.config.write() {
         Ok(mut c) => {
             c.ollama.model = model.to_string();
             tracing::info!("Modelo cambiado a '{model}' (vigente para proximas acciones).");
@@ -163,56 +164,14 @@ fn set_ollama_model(model: &str) {
     }
 }
 
-/// Refetch de la lista de modelos en background (torus el submenu
-/// fresco sin bloquear el thread del tray).
-///
-/// Publica desde U4: la pestana Ajustes la invoca para refrescar la cache
-/// compartida de modelos (el dropdown de la GUI la lee por `models_ref`).
-pub fn request_models_refresh() {
-    refresh_models();
-}
-
-fn refresh_models() {
-    let Some(data) = TRAY_DATA.get() else {
-        return;
-    };
-    // Guardia: si ya hay refetch en curso, no duplicar (no existe Mutex::is_locked).
-    if data
-        .models_fetching
-        .swap(true, std::sync::atomic::Ordering::Relaxed)
-    {
-        return;
-    }
-
-    let Some(ollama_config) = data.config.read().ok().map(|c| c.ollama.clone()) else {
-        return;
-    };
-    let cache = Arc::clone(&data.ollama_models);
-    let fetching = Arc::clone(&data.models_fetching);
-
-    std::thread::spawn(move || {
-        let models = crate::runtime::global()
-            .block_on(crate::ollama::OllamaClient::list_models(&ollama_config));
-        match models {
-            Ok(list) => {
-                *cache.lock().unwrap_or_else(|e| e.into_inner()) = list;
-            }
-            Err(e) => tracing::warn!("Refetch de modelos fallo: {e}"),
-        }
-        fetching.store(false, std::sync::atomic::Ordering::Relaxed);
-    });
-}
-
 /// Toggle "Iniciar con Windows" (compartido por WM_COMMAND y TPM_RETURNCMD).
 /// Escribe el registro y refleja el estado en config.toml.
-fn toggle_autostart() {
+fn toggle_autostart(state: &AppState) {
     let next_on = !crate::autostart::is_enabled();
     match crate::autostart::set_enabled(next_on) {
         Ok(()) => {
-            if let Some(data) = TRAY_DATA.get() {
-                if let Err(e) = crate::config::Config::write_autostart(&data.config_path, next_on) {
-                    tracing::warn!("Registro actualizado pero config no se guardo: {e}");
-                }
+            if let Err(e) = crate::config::Config::write_autostart(&state.config_path, next_on) {
+                tracing::warn!("Registro actualizado pero config no se guardo: {e}");
             }
             tracing::info!(
                 "Auto-arranque {} desde el tray.",
@@ -225,32 +184,11 @@ fn toggle_autostart() {
 
 /// Inicia el tray icon en un thread dedicado.
 ///
-/// # Arguments
-///
-/// * `ui_tx` - Canal para enviar comandos al UI (mostrar ayuda).
-/// * `config_path` - Ruta al config.toml (para abrir con notepad).
-/// * `suspended` - Flag compartido de pausa de atajos (P2).
-/// * `config` - Config compartida con RwLock (hot-reload de modelo — P3).
-/// * `ollama_models` - Cache de modelos instalados (llena en background).
-pub fn init_tray(
-    ui_tx: Sender<UiCommand>,
-    config_path: std::path::PathBuf,
-    suspended: Arc<AtomicBool>,
-    config: Arc<RwLock<crate::config::Config>>,
-    ollama_models: Arc<Mutex<Vec<String>>>,
-) {
-    // Guardar datos globales
-    let _ = TRAY_DATA.set(TrayData {
-        ui_tx,
-        config_path,
-        suspended,
-        config,
-        ollama_models,
-        models_fetching: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    });
-
+/// Fase 1.3: ya no hay `TRAY_DATA` static — el thread recibe el
+/// `Arc<AppState>` y se lo cuelga a su ventana via `GWLP_USERDATA`.
+pub fn init_tray(state: Arc<AppState>) {
     std::thread::spawn(move || unsafe {
-        run_tray_loop();
+        run_tray_loop(state);
     });
 }
 
@@ -261,7 +199,7 @@ pub fn init_tray(
 /// Esta funcion es `unsafe` porque llama a multiples funciones inseguras
 /// de la API de Windows (RegisterClassExW, CreateWindowExW, Shell_NotifyIconW,
 /// GetMessageW). Requiere que se llame desde un thread con message pump.
-unsafe fn run_tray_loop() {
+unsafe fn run_tray_loop(state: Arc<AppState>) {
     // SAFETY: GetModuleHandleW(None) devuelve el handle del modulo actual.
     // Es seguro de llamar. Si falla, usamos un HMODULE nulo (aceptable para
     // registrar la clase de ventana).
@@ -331,6 +269,15 @@ unsafe fn run_tray_loop() {
 
     let _ = ShowWindow(hwnd, SW_HIDE);
 
+    // Fase 1.3: cablear el estado al wnd_proc via GWLP_USERDATA (los wnd
+    // procs extern "system" no pueden capturar). Leak a proposito: el tray
+    // vive hasta el exit del proceso; el refcount extra queda sin liberar
+    // y el sistema lo recoge al morir el proceso.
+    let leaked = Box::leak(Box::new(TrayData {
+        state: Arc::clone(&state),
+    }));
+    SetWindowLongPtrW(hwnd, GWLP_USERDATA, (leaked as *const TrayData) as isize);
+
     let mut nid = NOTIFYICONDATAW {
         cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
         hWnd: hwnd,
@@ -380,10 +327,14 @@ extern "system" fn tray_wnd_proc(
         match msg {
             WM_TRAYICON => match l_param.0 as u32 {
                 WM_LBUTTONUP => {
-                    if let Some(data) = TRAY_DATA.get() {
-                        let _ = data
+                    if let Some(data) = tray_state(hwnd) {
+                        let state = &data.state;
+                        let _ = state
                             .ui_tx
-                            .send(UiCommand::ShowHelp(crate::actions::help_text()));
+                            .send(UiCommand::ShowHelp(crate::actions::help_text(
+                                state.hook_modifier,
+                                state.hook_capsmode,
+                            )));
                     }
                     LRESULT(0)
                 }
@@ -400,43 +351,59 @@ extern "system" fn tray_wnd_proc(
                 let id = w_param.0 as u32;
                 match id {
                     ID_TRAY_SHOW_HELP => {
-                        if let Some(data) = TRAY_DATA.get() {
-                            let _ = data
-                                .ui_tx
-                                .send(UiCommand::ShowHelp(crate::actions::help_text()));
+                        if let Some(data) = tray_state(hwnd) {
+                            let state = &data.state;
+                            let _ =
+                                state
+                                    .ui_tx
+                                    .send(UiCommand::ShowHelp(crate::actions::help_text(
+                                        state.hook_modifier,
+                                        state.hook_capsmode,
+                                    )));
                         }
                     }
                     ID_TRAY_CONFIG => {
-                        if let Some(data) = TRAY_DATA.get() {
+                        if let Some(data) = tray_state(hwnd) {
                             // U4: abrir la pestana Ajustes de la GUI (no
                             // un editor de texto);
-                            let _ = data.ui_tx.send(UiCommand::ShowAjustes);
-                            crate::ui::request_repaint();
+                            let _ = data.state.ui_tx.send(UiCommand::ShowAjustes);
+                            data.state.repaint();
                         }
                     }
                     ID_TRAY_AUTOSTART => {
-                        toggle_autostart();
+                        if let Some(data) = tray_state(hwnd) {
+                            toggle_autostart(&data.state);
+                        }
                     }
                     ID_TRAY_PAUSE => {
-                        toggle_pause();
+                        if let Some(data) = tray_state(hwnd) {
+                            toggle_pause(&data.state);
+                        }
                     }
                     id if (ID_MODELO_BASE..ID_MODELO_BASE + MAX_MODELOS_MENU as u32)
                         .contains(&id) =>
                     {
-                        let models = TRAY_DATA
-                            .get()
-                            .and_then(|d| d.ollama_models.lock().ok().map(|m| (*m).clone()))
-                            .unwrap_or_default();
-                        if let Some(model) = models
-                            .get((id - ID_MODELO_BASE) as usize)
-                            .map(String::as_str)
-                        {
-                            set_ollama_model(model);
-                            refresh_models();
+                        if let Some(data) = tray_state(hwnd) {
+                            let models = data
+                                .state
+                                .ollama_models
+                                .read()
+                                .ok()
+                                .map(|m| m.clone())
+                                .unwrap_or_default();
+                            if let Some(model) = models
+                                .get((id - ID_MODELO_BASE) as usize)
+                                .map(String::as_str)
+                            {
+                                set_ollama_model(&data.state, model);
+                                data.state.spawn_models_refresh();
+                            }
                         }
                     }
                     id if (ID_ATAJOS_BASE + 1..=ID_ATAJOS_NINGUNO).contains(&id) => {
-                        handle_atajos_menu(id);
+                        if let Some(data) = tray_state(hwnd) {
+                            handle_atajos_menu(&data.state, id);
+                        }
                     }
                     ID_TRAY_EXIT => {
                         tracing::info!("Saliendo via tray menu...");
@@ -464,6 +431,12 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         Err(_) => return,
     };
 
+    let Some(data) = tray_state(hwnd) else {
+        tracing::warn!("Tray sin estado (GWLP_USERDATA vacio).");
+        return;
+    };
+    let state = &data.state;
+
     let _ = AppendMenuW(
         hmenu,
         MF_STRING,
@@ -488,9 +461,7 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         ID_TRAY_AUTOSTART as usize,
         windows::core::w!("Iniciar con Windows"),
     );
-    let paused = TRAY_DATA
-        .get()
-        .is_some_and(|d| d.suspended.load(Ordering::Relaxed));
+    let paused = state.suspendido.load(Ordering::Relaxed);
     let pause_flags = if paused {
         windows::Win32::UI::WindowsAndMessaging::MENU_ITEM_FLAGS(MF_STRING.0 | MF_CHECKED.0)
     } else {
@@ -504,9 +475,7 @@ unsafe fn show_tray_menu(hwnd: HWND) {
     );
 
     // === Submenu "Atajos" (U3, pausa modular per-atajo) ===
-    let hotkeys_cfg = TRAY_DATA
-        .get()
-        .and_then(|d| d.config.read().ok().map(|c| c.hotkeys.clone()));
+    let hotkeys_cfg = state.config.read().ok().map(|c| c.hotkeys.clone());
 
     match CreatePopupMenu() {
         Err(_) => {
@@ -558,14 +527,18 @@ unsafe fn show_tray_menu(hwnd: HWND) {
     }
 
     // === Submenu "Modelo" (P3) ===
-    let current_model = TRAY_DATA
-        .get()
-        .and_then(|d| d.config.read().ok().map(|c| c.ollama.model.clone()))
+    let current_model = state
+        .config
+        .read()
+        .ok()
+        .map(|c| c.ollama.model.clone())
         .unwrap_or_default();
 
-    let models = TRAY_DATA
-        .get()
-        .and_then(|d| d.ollama_models.lock().ok().map(|m| (*m).clone()))
+    let models = state
+        .ollama_models
+        .read()
+        .ok()
+        .map(|m| m.clone())
         .unwrap_or_default();
 
     match CreatePopupMenu() {
@@ -576,7 +549,7 @@ unsafe fn show_tray_menu(hwnd: HWND) {
             if models.is_empty() {
                 // Cache vacia: refetch en background; el proximo click
                 // tendra la lista (no bloquear el thread del tray).
-                refresh_models();
+                state.spawn_models_refresh();
                 let loading = windows::core::HSTRING::from("(buscando modelos...)");
                 let _ = AppendMenuW(
                     hmenu_model,
@@ -649,40 +622,41 @@ unsafe fn show_tray_menu(hwnd: HWND) {
     let menu_id = cmd.0 as u32;
     match menu_id {
         ID_TRAY_SHOW_HELP => {
-            if let Some(data) = TRAY_DATA.get() {
-                let _ = data
-                    .ui_tx
-                    .send(UiCommand::ShowHelp(crate::actions::help_text()));
-            }
+            let _ = state
+                .ui_tx
+                .send(UiCommand::ShowHelp(crate::actions::help_text(
+                    state.hook_modifier,
+                    state.hook_capsmode,
+                )));
         }
         ID_TRAY_CONFIG => {
-            if let Some(data) = TRAY_DATA.get() {
-                // U4: abrir la pestana Ajustes de la GUI (no un editor);
-                let _ = data.ui_tx.send(UiCommand::ShowAjustes);
-                crate::ui::request_repaint();
-            }
+            // U4: abrir la pestana Ajustes de la GUI (no un editor);
+            let _ = state.ui_tx.send(UiCommand::ShowAjustes);
+            state.repaint();
         }
         ID_TRAY_AUTOSTART => {
-            toggle_autostart();
+            toggle_autostart(state);
         }
         ID_TRAY_PAUSE => {
-            toggle_pause();
+            toggle_pause(state);
         }
         id if (ID_MODELO_BASE..ID_MODELO_BASE + MAX_MODELOS_MENU as u32).contains(&id) => {
-            let models = TRAY_DATA
-                .get()
-                .and_then(|d| d.ollama_models.lock().ok().map(|m| (*m).clone()))
+            let models = state
+                .ollama_models
+                .read()
+                .ok()
+                .map(|m| m.clone())
                 .unwrap_or_default();
             if let Some(model) = models
                 .get((id - ID_MODELO_BASE) as usize)
                 .map(String::as_str)
             {
-                set_ollama_model(model);
-                refresh_models();
+                set_ollama_model(state, model);
+                state.spawn_models_refresh();
             }
         }
         id if (ID_ATAJOS_BASE + 1..=ID_ATAJOS_NINGUNO).contains(&id) => {
-            handle_atajos_menu(id);
+            handle_atajos_menu(state, id);
         }
         ID_TRAY_EXIT => {
             tracing::info!("Saliendo via tray menu...");

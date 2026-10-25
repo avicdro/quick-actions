@@ -17,6 +17,8 @@ pub mod update_check;
 #[cfg(windows)]
 pub mod actions;
 #[cfg(windows)]
+pub mod app_state;
+#[cfg(windows)]
 pub mod autostart;
 #[cfg(windows)]
 pub mod clipboard;

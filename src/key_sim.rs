@@ -3,6 +3,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::error::{AppError, Result};
+use crate::hotkeys::Modifier;
 
 /// Simula pulsaciones de teclado usando `enigo`.
 pub struct KeySimulator;
@@ -20,16 +21,19 @@ impl KeySimulator {
     /// config). Si simulamos Ctrl+C mientras esta presionado, el sistema
     /// ve terciopelos corridos (Alt+Ctrl+C) que no copian correctamente,
     /// y el texto queda vacio (causa del bug "selecciona todo").
-    fn release_modifiers() -> Result<()> {
+    ///
+    /// Fase 1.3: el modificador APLICADO (capturado por el hook al arrancar)
+    /// llega por parametro; ya no hay static `MODIFIER` que consultar.
+    fn release_modifiers(modifier: Modifier) -> Result<()> {
         // Esperar a que el usuario suelte fisicamente el modificador
         // configurado. Hasta 2 segundos (40 x 50ms).
         #[cfg(windows)]
         {
             use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 
-            let watch: &[i32] = match crate::hotkeys::modifier() {
-                crate::hotkeys::Modifier::Alt => &[0x12],      // Alt
-                crate::hotkeys::Modifier::CapsLock => &[0x14], // CapsLock
+            let watch: &[i32] = match modifier {
+                Modifier::Alt => &[0x12],      // Alt
+                Modifier::CapsLock => &[0x14], // CapsLock
             };
             for _ in 0..40 {
                 let down = watch
@@ -53,8 +57,8 @@ impl KeySimulator {
     }
 
     /// Simula `Ctrl+C` (copiar seleccion).
-    pub fn copy() -> Result<()> {
-        Self::release_modifiers()?;
+    pub fn copy(modifier: Modifier) -> Result<()> {
+        Self::release_modifiers(modifier)?;
         let mut enigo = Self::enigo()?;
         EnigoKeyboard::key(&mut enigo, Key::Control, Direction::Press)
             .map_err(|e| AppError::Keyboard(format!("Error teclado: {e}")))?;
@@ -67,8 +71,8 @@ impl KeySimulator {
     }
 
     /// Simula `Ctrl+V` (pegar).
-    pub fn paste() -> Result<()> {
-        Self::release_modifiers()?;
+    pub fn paste(modifier: Modifier) -> Result<()> {
+        Self::release_modifiers(modifier)?;
         let mut enigo = Self::enigo()?;
         EnigoKeyboard::key(&mut enigo, Key::Control, Direction::Press)
             .map_err(|e| AppError::Keyboard(format!("Error teclado: {e}")))?;
@@ -81,8 +85,8 @@ impl KeySimulator {
     }
 
     /// Simula `Ctrl+A` (seleccionar todo).
-    pub fn select_all() -> Result<()> {
-        Self::release_modifiers()?;
+    pub fn select_all(modifier: Modifier) -> Result<()> {
+        Self::release_modifiers(modifier)?;
         let mut enigo = Self::enigo()?;
         EnigoKeyboard::key(&mut enigo, Key::Control, Direction::Press)
             .map_err(|e| AppError::Keyboard(format!("Error teclado: {e}")))?;

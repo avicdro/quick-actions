@@ -1,29 +1,10 @@
 use eframe::egui;
 use std::sync::mpsc::Receiver;
-use std::sync::OnceLock;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::Arc;
 
 use crate::actions;
-use crate::clipboard::ClipboardManager;
-use crate::config::Config;
-use crate::history::History;
-use crate::hotkeys::HotkeyCommand;
-
-/// Contexto global de egui para que otros threads (hook, workers)
-/// puedan despertar el event loop del UI sin polling constante.
-static CONTEXT: OnceLock<egui::Context> = OnceLock::new();
-
-/// Guarda el contexto de egui. Debe llamarse una vez al iniciar el UI.
-pub fn set_context(ctx: &egui::Context) {
-    let _ = CONTEXT.set(ctx.clone());
-}
-
-/// Despierta el event loop del UI. Llamar desde cualquier thread.
-pub fn request_repaint() {
-    if let Some(ctx) = CONTEXT.get() {
-        ctx.request_repaint();
-    }
-}
+use crate::app_state::AppState;
+use crate::hotkeys::{CapsMode, HotkeyCommand, Modifier};
 
 // Protocolo de datos/comandos (cross-platform, movido a su propio modulo
 // para que la logica no dependa de egui — de camino a la fase 1 de refactor).
@@ -49,14 +30,9 @@ pub struct QuickActionsApp {
     ui_rx: Receiver<UiCommand>,
     /// Canal hotkeys (hook -> app)
     hotkey_rx: Receiver<HotkeyCommand>,
-    /// Configuracion
-    config: Arc<RwLock<Config>>,
-    /// Clipboard compartido
-    clipboard: Arc<ClipboardManager>,
-    /// Historial compartido
-    history: Arc<Mutex<History>>,
-    /// Sender UI
-    ui_tx: std::sync::mpsc::Sender<UiCommand>,
+    /// Estado compartido de la app (fase 1.3: config, clipboard, history,
+    /// modelos, ui_tx, repaint — todo en uno, inyectado por `main`).
+    state: Arc<AppState>,
 
     // --- Contenido de pestanas ---
     /// Resultado actual (ultimo).
@@ -94,11 +70,6 @@ pub struct QuickActionsApp {
     /// Si hay aviso de update activo: URL de descarga en pestaña Resultado.
     update_url: Option<String>,
 
-    // --- Ajustes (U4) ---
-    /// Cache compartida de modelos Ollama (la misma que el tray refresca).
-    models_ref: Arc<Mutex<Vec<String>>>,
-    /// Path absoluto del config.toml (persistencia de Ajustes).
-    config_path: std::path::PathBuf,
     /// U5: si ya aplicamos el tema custom (una sola vez al primer frame).
     style_applied: bool,
 }
@@ -108,22 +79,12 @@ impl QuickActionsApp {
     pub fn new(
         ui_rx: Receiver<UiCommand>,
         hotkey_rx: Receiver<HotkeyCommand>,
-        config: Arc<RwLock<Config>>,
-        clipboard: Arc<ClipboardManager>,
-        history: Arc<Mutex<History>>,
-        ui_tx: std::sync::mpsc::Sender<UiCommand>,
-        models_ref: Arc<Mutex<Vec<String>>>,
-        config_path: std::path::PathBuf,
+        state: Arc<AppState>,
     ) -> Self {
         Self {
             ui_rx,
             hotkey_rx,
-            config,
-            clipboard,
-            history,
-            ui_tx,
-            models_ref,
-            config_path,
+            state,
             style_applied: false,
             result_data: None,
             result_original: String::new(),
@@ -241,14 +202,10 @@ impl QuickActionsApp {
     fn process_hotkeys(&self) {
         while let Ok(cmd) = self.hotkey_rx.try_recv() {
             tracing::info!("Hotkey: {:?}", cmd);
-            let config = Arc::clone(&self.config);
-            let clipboard = Arc::clone(&self.clipboard);
-            let history = Arc::clone(&self.history);
-            let ui_tx = self.ui_tx.clone();
+            let state = Arc::clone(&self.state);
 
             std::thread::spawn(move || {
-                if let Err(e) = actions::handle_command(cmd, &config, &clipboard, &history, &ui_tx)
-                {
+                if let Err(e) = actions::handle_command(cmd, &state) {
                     tracing::error!("Error en handler: {e}");
                 }
             });
@@ -257,7 +214,7 @@ impl QuickActionsApp {
 
     /// Dibuja la pestana de resultado.
     fn draw_result_tab(&mut self, ui: &mut egui::Ui) {
-        let m = modifier_name();
+        let m = self.state.hook_modifier.name();
         if self.result_data.is_none() {
             ui.label(format!(
                 "No hay resultado todavía. Selecciona texto y pulsa {m}+T/R/Enter."
@@ -327,7 +284,7 @@ impl QuickActionsApp {
 
     /// Dibuja la pestana de historial.
     fn draw_history_tab(&mut self, ui: &mut egui::Ui) {
-        let m = modifier_name();
+        let m = self.state.hook_modifier.name();
         let entries = self.history_data.as_ref().map(|d| d.entries.clone());
 
         match entries {
@@ -369,7 +326,7 @@ impl QuickActionsApp {
 
         // Boton para recargar historial
         if ui.button("Actualizar").clicked() {
-            if let Ok(hist) = self.history.lock() {
+            if let Ok(hist) = self.state.history.lock() {
                 let entries: Vec<HistoryEntryView> = hist
                     .entries()
                     .iter()
@@ -399,9 +356,9 @@ impl QuickActionsApp {
     /// Dibuja la pestana de ayuda (U5: filas estructuradas con badges de
     /// tecla en vez de un bloque ASCII).
     fn draw_help_tab(&self, ui: &mut egui::Ui) {
-        let mod_name = modifier_name();
-        let toggle_note = crate::hotkeys::modifier() == crate::hotkeys::Modifier::CapsLock
-            && crate::hotkeys::caps_mode() == crate::hotkeys::CapsMode::Toggle;
+        let mod_name = self.state.hook_modifier.name();
+        let toggle_note = self.state.hook_modifier == Modifier::CapsLock
+            && self.state.hook_capsmode == CapsMode::Toggle;
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.add_space(6.0);
@@ -457,7 +414,7 @@ impl QuickActionsApp {
     fn draw_settings_tab(&self, ui: &mut egui::Ui) {
         // Snapshot: bajo el lock SOLO para clonar (no sostener el guard de
         // lectura mientras la UI dibuja: los commits puntuales hacen write()).
-        let snapshot = self.config.read().ok().map(|c| c.clone());
+        let snapshot = self.state.config.read().ok().map(|c| c.clone());
         let mut cfg = match snapshot {
             Some(c) => c,
             None => {
@@ -495,8 +452,9 @@ impl QuickActionsApp {
                                         self.persist_ollama_full(&cfg.ollama);
                                     }
                                     let models = self
-                                        .models_ref
-                                        .lock()
+                                        .state
+                                        .ollama_models
+                                        .read()
                                         .ok()
                                         .map(|m| m.clone())
                                         .unwrap_or_default();
@@ -571,7 +529,7 @@ impl QuickActionsApp {
                 // ================================================== Hotkeys
                 settings_card(ui, "Atajos", |ui| {
                     // Modificador (alt/capslock) — requiere reinicio (statics).
-                    let modifier_applied = crate::hotkeys::modifier_name().to_lowercase();
+                    let modifier_applied = self.state.hook_modifier.name().to_lowercase();
                     let mut modifier_changed = false;
                     egui::ComboBox::from_label("Modificador")
                         .selected_text(cfg.hotkeys.modifier.clone())
@@ -600,12 +558,12 @@ impl QuickActionsApp {
                         });
                     if modifier_changed {
                         let _ = crate::config::Config::write_config_key(
-                            &self.config_path,
+                            &self.state.config_path,
                             "hotkeys",
                             "modifier",
                             cfg.hotkeys.modifier.clone(),
                         );
-                        if let Ok(mut c) = self.config.write() {
+                        if let Ok(mut c) = self.state.config.write() {
                             c.hotkeys.modifier = cfg.hotkeys.modifier.clone();
                         }
                     }
@@ -617,7 +575,7 @@ impl QuickActionsApp {
                     }
 
                     // Capsmode: derivar bool <-> "toggle"/"hold"; solo con capslock.
-                    let capsmode_applied = match crate::hotkeys::caps_mode() {
+                    let capsmode_applied = match self.state.hook_capsmode {
                         crate::hotkeys::CapsMode::Toggle => "toggle",
                         crate::hotkeys::CapsMode::Hold => "hold",
                     };
@@ -633,12 +591,12 @@ impl QuickActionsApp {
                         cfg.hotkeys.capsmode =
                             if caps_toggle { "toggle" } else { "hold" }.to_string();
                         let _ = crate::config::Config::write_config_key(
-                            &self.config_path,
+                            &self.state.config_path,
                             "hotkeys",
                             "capsmode",
                             cfg.hotkeys.capsmode.clone(),
                         );
-                        if let Ok(mut c) = self.config.write() {
+                        if let Ok(mut c) = self.state.config.write() {
                             c.hotkeys.capsmode = cfg.hotkeys.capsmode.clone();
                         }
                     }
@@ -667,17 +625,17 @@ impl QuickActionsApp {
                                         &mut on,
                                         format!(
                                             "{desc} ({}+{label})",
-                                            crate::hotkeys::modifier_name()
+                                            self.state.hook_modifier.name()
                                         ),
                                     )
                                     .changed()
                                 {
                                     let _ = crate::config::Config::write_hotkey(
-                                        &self.config_path,
+                                        &self.state.config_path,
                                         cmd.config_field(),
                                         on,
                                     );
-                                    if let Ok(mut c) = self.config.write() {
+                                    if let Ok(mut c) = self.state.config.write() {
                                         *crate::hotkeys::hotkey_switch(*cmd, &mut c.hotkeys) = on;
                                     }
                                 }
@@ -699,10 +657,10 @@ impl QuickActionsApp {
                         match crate::autostart::set_enabled(autostart) {
                             Ok(()) => {
                                 let _ = crate::config::Config::write_autostart(
-                                    &self.config_path,
+                                    &self.state.config_path,
                                     autostart,
                                 );
-                                if let Ok(mut c) = self.config.write() {
+                                if let Ok(mut c) = self.state.config.write() {
                                     c.app.autostart = autostart;
                                 }
                                 let msg = if autostart {
@@ -710,14 +668,17 @@ impl QuickActionsApp {
                                 } else {
                                     "Auto-arranque desactivado"
                                 };
-                                let _ = self.ui_tx.send(UiCommand::SetStatus(msg.to_string()));
+                                let _ =
+                                    self.state.ui_tx.send(UiCommand::SetStatus(msg.to_string()));
                             }
                             Err(e) => {
-                                let _ =
-                                    self.ui_tx.send(UiCommand::SetStatus(format!("Error: {e}")));
+                                let _ = self
+                                    .state
+                                    .ui_tx
+                                    .send(UiCommand::SetStatus(format!("Error: {e}")));
                             }
                         }
-                        request_repaint();
+                        self.state.repaint();
                     }
 
                     // Check de updates.
@@ -729,12 +690,12 @@ impl QuickActionsApp {
                         .changed()
                     {
                         let _ = crate::config::Config::write_config_key(
-                            &self.config_path,
+                            &self.state.config_path,
                             "app",
                             "check_updates",
                             cfg.app.check_updates,
                         );
-                        if let Ok(mut c) = self.config.write() {
+                        if let Ok(mut c) = self.state.config.write() {
                             c.app.check_updates = cfg.app.check_updates;
                         }
                     }
@@ -754,12 +715,12 @@ impl QuickActionsApp {
                                 .changed()
                             {
                                 let _ = crate::config::Config::write_config_key(
-                                    &self.config_path,
+                                    &self.state.config_path,
                                     "app",
                                     "repository",
                                     cfg.app.repository.clone(),
                                 );
-                                if let Ok(mut c) = self.config.write() {
+                                if let Ok(mut c) = self.state.config.write() {
                                     c.app.repository = cfg.app.repository.clone();
                                 }
                             }
@@ -777,11 +738,11 @@ impl QuickActionsApp {
         ui.horizontal(|ui| {
             if ui.button("Abrir config.toml (avanzado)").clicked() {
                 let _ = std::process::Command::new("notepad")
-                    .arg(&self.config_path)
+                    .arg(&self.state.config_path)
                     .spawn();
             }
             if ui.button("Actualizar lista de modelos").clicked() {
-                crate::tray::request_models_refresh();
+                self.state.spawn_models_refresh();
             }
         });
     }
@@ -791,26 +752,26 @@ impl QuickActionsApp {
     /// seccion es chica y toml_edit preserva el formato de las demas.
     fn persist_ollama_full(&self, ollama: &crate::config::OllamaConfig) {
         let _ = crate::config::Config::write_config_key(
-            &self.config_path,
+            &self.state.config_path,
             "ollama",
             "model",
             ollama.model.clone(),
         );
         let _ = crate::config::Config::write_config_key(
-            &self.config_path,
+            &self.state.config_path,
             "ollama",
             "endpoint",
             ollama.endpoint.clone(),
         );
         let _ = crate::config::Config::write_config_key(
-            &self.config_path,
+            &self.state.config_path,
             "ollama",
             "timeout_seconds",
             // toml_edit solo tiene From<i64>: el campo ya esta saneado y
             // clampado a 5..=600 en la UI.
             i64::try_from(ollama.timeout_seconds).unwrap_or(300),
         );
-        if let Ok(mut c) = self.config.write() {
+        if let Ok(mut c) = self.state.config.write() {
             c.ollama = ollama.clone();
         }
     }
@@ -818,9 +779,10 @@ impl QuickActionsApp {
 
 impl eframe::App for QuickActionsApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Guardar contexto la primera vez.
-        if CONTEXT.get().is_none() {
-            set_context(ctx);
+        // Guardar contexto la primera vez (fase 1.3: en AppState concret),
+        // para que hook/tray/workers despierten el event loop por ahi.
+        if self.state.ui_ctx.get().is_none() {
+            self.state.set_ui_ctx(ctx.clone());
         }
 
         // U1: toasts transitorios (auto-hide).
@@ -1383,11 +1345,6 @@ fn key_badge(ui: &mut egui::Ui, text: &str) {
                     .size(13.0),
             );
         });
-}
-
-/// Nombre legible del modificador configurado (para textos e igui).
-fn modifier_name() -> &'static str {
-    crate::hotkeys::modifier_name()
 }
 
 /// Abre una URL en el navegador por defecto de Windows.

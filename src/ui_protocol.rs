@@ -4,10 +4,18 @@
 //! estructuras de datos y comandos no dependen de egui/Windows.
 //! El render vive en `crate::ui` (windows-only).
 
+use std::sync::Arc;
+
 /// Duracion (segundos) de un toast de tipo Notice (U1).
 pub const NOTICE_TOAST_SECS: f64 = 3.5;
 /// Errores: mas tiempo para poder leer el mensaje.
 pub const ERROR_TOAST_SECS: f64 = 6.0;
+
+/// Callback para despertar el event loop del UI desde cualquier thread
+/// (fase 1.3: reemplaza al static `CONTEXT` de `ui.rs`; el egui::Context
+/// real se cablea en el primer frame via `AppState::set_ui_ctx` y antes
+/// de eso el callback no hace nada).
+pub type RepaintFn = Arc<dyn Fn() + Send + Sync>;
 
 /// Clase de toast y su comportamiento de autodesaparicion (U1).
 ///

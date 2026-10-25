@@ -1,30 +1,21 @@
 //! Handlers de comandos de hotkey (corregir, traducir, etc.).
 
-use std::sync::{Arc, Mutex, RwLock};
-
-use crate::clipboard::ClipboardManager;
-use crate::config::Config;
+use crate::app_state::AppState;
 use crate::error::{AppError, Result};
-use crate::history::History;
-use crate::hotkeys::HotkeyCommand;
+use crate::hotkeys::{CapsMode, HotkeyCommand, Modifier};
 use crate::key_sim::KeySimulator;
 use crate::ollama::OllamaClient;
 use crate::prompts;
 use crate::text_utils;
-use crate::ui::{self, HistoryData, HistoryEntryView, ResultData, UiCommand};
+use crate::ui_protocol::{HistoryData, HistoryEntryView, ResultData, UiCommand};
 
 /// Texto de ayuda mostrado con el hotkey de ayuda o click en tray.
 ///
 /// El prefix del modificador es dinamico (P7): "CapsLock" o "Alt" segun
-/// `[hotkeys] modifier`.
-pub fn help_text() -> String {
-    let m = match crate::hotkeys::modifier() {
-        crate::hotkeys::Modifier::CapsLock => "CapsLock",
-        crate::hotkeys::Modifier::Alt => "Alt",
-    };
-    let caps_note = if crate::hotkeys::modifier() == crate::hotkeys::Modifier::CapsLock
-        && crate::hotkeys::caps_mode() == crate::hotkeys::CapsMode::Toggle
-    {
+/// la config (fase 1.3: ya no hay static `MODIFIER`; se pasa como param).
+pub fn help_text(modifier: Modifier, caps_mode: CapsMode) -> String {
+    let m = modifier.name();
+    let caps_note = if modifier == Modifier::CapsLock && caps_mode == CapsMode::Toggle {
         "  (modo toggle: tap de CapsLock latchea; la proxima tecla dispara)\n"
     } else {
         ""
@@ -58,42 +49,42 @@ pub fn help_text() -> String {
 ///
 /// La config se lee del `RwLock` compartido al inicio del handler: el modelo
 /// vigente es el que el usuario haya seleccionado en el tray (hot-reload P3).
-pub fn handle_command(
-    cmd: HotkeyCommand,
-    config: &Arc<RwLock<Config>>,
-    clipboard: &Arc<ClipboardManager>,
-    history: &Arc<Mutex<History>>,
-    ui_tx: &std::sync::mpsc::Sender<UiCommand>,
-) -> Result<()> {
-    let config = config
-        .read()
-        .ok()
-        .map(|c| c.clone())
-        .ok_or_else(|| AppError::msg("Error de lock en config (poisoned)"))?;
-
+/// Fase 1.3: el estado llega empaquetado en `AppState` (antes: 5 params
+/// sueltos + `ui::request_repaint` global).
+pub fn handle_command(cmd: HotkeyCommand, state: &AppState) -> Result<()> {
     // U3, pausa modular: atajo individualmente desactivado en la config.
     // La pausa total ([hotkeys] enabled / tray) se resuelve antes en el hook.
+    let Some(config) = state.config_snapshot() else {
+        return Err(AppError::msg("Error de lock en config (poisoned)"));
+    };
     if !crate::hotkeys::is_hotkey_enabled(cmd, &config.hotkeys) {
         let msg = format!(
             "Atajo '{}+{}' desactivado (Ajustes)",
-            crate::hotkeys::modifier_name(),
+            state.hook_modifier.name(),
             cmd.key_label()
         );
-        let _ = ui_tx.send(UiCommand::SetStatus(msg));
-        ui::request_repaint();
+        let _ = state
+            .ui_tx
+            .send(crate::ui_protocol::UiCommand::SetStatus(msg));
+        state.repaint();
         return Ok(());
     }
 
     let ollama = OllamaClient::new(config.ollama.clone());
     let result = match cmd {
-        HotkeyCommand::Correct => handle_correct(clipboard, history, ui_tx, ollama),
-        HotkeyCommand::Translate => handle_translate(clipboard, ui_tx, ollama),
-        HotkeyCommand::Summarize => handle_summarize(clipboard, ui_tx, ollama),
-        HotkeyCommand::Generate => handle_generate(clipboard, ui_tx, ollama),
-        HotkeyCommand::ShowHistory => handle_show_history(history, ui_tx),
+        HotkeyCommand::Correct => handle_correct(state, ollama),
+        HotkeyCommand::Translate => handle_translate(state, ollama),
+        HotkeyCommand::Summarize => handle_summarize(state, ollama),
+        HotkeyCommand::Generate => handle_generate(state, ollama),
+        HotkeyCommand::ShowHistory => handle_show_history(state),
         HotkeyCommand::ShowHelp => {
-            let _ = ui_tx.send(UiCommand::ShowHelp(help_text()));
-            ui::request_repaint();
+            let _ = state
+                .ui_tx
+                .send(crate::ui_protocol::UiCommand::ShowHelp(help_text(
+                    state.hook_modifier,
+                    state.hook_capsmode,
+                )));
+            state.repaint();
             Ok(())
         }
     };
@@ -101,25 +92,24 @@ pub fn handle_command(
     // Si hubo error, mostrarlo sutilmente en la barra de estado
     if let Err(ref e) = result {
         let msg = format!("Error: {e}");
-        let _ = ui_tx.send(UiCommand::SetStatus(msg));
-        ui::request_repaint();
+        let _ = state
+            .ui_tx
+            .send(crate::ui_protocol::UiCommand::SetStatus(msg));
+        state.repaint();
     }
 
     result
 }
 
-fn handle_correct(
-    clipboard: &Arc<ClipboardManager>,
-    history: &Arc<Mutex<History>>,
-    ui_tx: &std::sync::mpsc::Sender<UiCommand>,
-    ollama: OllamaClient,
-) -> Result<()> {
-    let _ = ui_tx.send(UiCommand::SetStatus("Corrigiendo...".to_string()));
-    ui::request_repaint();
+fn handle_correct(state: &AppState, ollama: OllamaClient) -> Result<()> {
+    let _ = state
+        .ui_tx
+        .send(UiCommand::SetStatus("Corrigiendo...".to_string()));
+    state.repaint();
 
-    let texto = obtener_texto_para_corregir(clipboard)?;
+    let texto = obtener_texto_para_corregir(state)?;
     if texto.is_empty() {
-        let _ = ui_tx.send(UiCommand::SetStatus(String::new()));
+        let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
         return Ok(());
     }
 
@@ -132,7 +122,7 @@ fn handle_correct(
 
     if resultado.is_empty() {
         tracing::warn!("Ollama devolvio resultado vacio.");
-        let _ = ui_tx.send(UiCommand::SetStatus(String::new()));
+        let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
         return Ok(());
     }
 
@@ -142,31 +132,30 @@ fn handle_correct(
     );
 
     {
-        let mut hist = history
+        let mut hist = state
+            .history
             .lock()
             .map_err(|_| crate::error::AppError::msg("Error de lock en historial"))?;
         hist.push(texto.clone(), resultado.clone());
         let _ = hist.save();
     }
 
-    clipboard.set_text(&resultado)?;
-    KeySimulator::paste()?;
+    state.clipboard.set_text(&resultado)?;
+    KeySimulator::paste(state.hook_modifier)?;
 
-    let _ = ui_tx.send(UiCommand::SetStatus(String::new()));
+    let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
     Ok(())
 }
 
-fn handle_translate(
-    clipboard: &Arc<ClipboardManager>,
-    ui_tx: &std::sync::mpsc::Sender<UiCommand>,
-    ollama: OllamaClient,
-) -> Result<()> {
-    let _ = ui_tx.send(UiCommand::SetStatus("Traduciendo...".to_string()));
-    ui::request_repaint();
+fn handle_translate(state: &AppState, ollama: OllamaClient) -> Result<()> {
+    let _ = state
+        .ui_tx
+        .send(UiCommand::SetStatus("Traduciendo...".to_string()));
+    state.repaint();
 
-    let texto = obtener_texto_para_corregir(clipboard)?;
+    let texto = obtener_texto_para_corregir(state)?;
     if texto.is_empty() {
-        let _ = ui_tx.send(UiCommand::SetStatus(String::new()));
+        let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
         return Ok(());
     }
 
@@ -178,7 +167,7 @@ fn handle_translate(
         crate::runtime::global().block_on(ollama.generate(&sys_prompt, &texto_limpio))?;
 
     if resultado.is_empty() {
-        let _ = ui_tx.send(UiCommand::SetStatus(String::new()));
+        let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
         return Ok(());
     }
 
@@ -188,27 +177,25 @@ fn handle_translate(
         format!("Traduccion al {idioma}")
     };
 
-    let _ = ui_tx.send(UiCommand::ShowResult(ResultData {
+    let _ = state.ui_tx.send(UiCommand::ShowResult(ResultData {
         titulo,
         original: texto_limpio,
         resultado,
     }));
-    ui::request_repaint();
+    state.repaint();
 
     Ok(())
 }
 
-fn handle_summarize(
-    clipboard: &Arc<ClipboardManager>,
-    ui_tx: &std::sync::mpsc::Sender<UiCommand>,
-    ollama: OllamaClient,
-) -> Result<()> {
-    let _ = ui_tx.send(UiCommand::SetStatus("Resumiendo...".to_string()));
-    ui::request_repaint();
+fn handle_summarize(state: &AppState, ollama: OllamaClient) -> Result<()> {
+    let _ = state
+        .ui_tx
+        .send(UiCommand::SetStatus("Resumiendo...".to_string()));
+    state.repaint();
 
-    let texto = obtener_texto_para_corregir(clipboard)?;
+    let texto = obtener_texto_para_corregir(state)?;
     if texto.is_empty() {
-        let _ = ui_tx.send(UiCommand::SetStatus(String::new()));
+        let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
         return Ok(());
     }
 
@@ -220,32 +207,30 @@ fn handle_summarize(
         crate::runtime::global().block_on(ollama.generate(&sys_prompt, &texto_limpio))?;
 
     if resultado.is_empty() {
-        let _ = ui_tx.send(UiCommand::SetStatus(String::new()));
+        let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
         return Ok(());
     }
 
-    let _ = ui_tx.send(UiCommand::SetStatus(String::new()));
-    let _ = ui_tx.send(UiCommand::ShowResult(ResultData {
+    let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
+    let _ = state.ui_tx.send(UiCommand::ShowResult(ResultData {
         titulo: "Resumen".to_string(),
         original: texto_limpio,
         resultado,
     }));
-    ui::request_repaint();
+    state.repaint();
 
     Ok(())
 }
 
-fn handle_generate(
-    clipboard: &Arc<ClipboardManager>,
-    ui_tx: &std::sync::mpsc::Sender<UiCommand>,
-    ollama: OllamaClient,
-) -> Result<()> {
-    let _ = ui_tx.send(UiCommand::SetStatus("Generando respuesta...".to_string()));
-    ui::request_repaint();
+fn handle_generate(state: &AppState, ollama: OllamaClient) -> Result<()> {
+    let _ = state
+        .ui_tx
+        .send(UiCommand::SetStatus("Generando respuesta...".to_string()));
+    state.repaint();
 
-    let texto = obtener_texto_para_corregir(clipboard)?;
+    let texto = obtener_texto_para_corregir(state)?;
     if texto.is_empty() {
-        let _ = ui_tx.send(UiCommand::SetStatus(String::new()));
+        let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
         return Ok(());
     }
 
@@ -256,26 +241,24 @@ fn handle_generate(
     let resultado = crate::runtime::global().block_on(ollama.generate(&sys_prompt, &prompt))?;
 
     if resultado.is_empty() {
-        let _ = ui_tx.send(UiCommand::SetStatus(String::new()));
+        let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
         return Ok(());
     }
 
-    let _ = ui_tx.send(UiCommand::SetStatus(String::new()));
-    let _ = ui_tx.send(UiCommand::ShowResult(ResultData {
+    let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
+    let _ = state.ui_tx.send(UiCommand::ShowResult(ResultData {
         titulo: "Respuesta".to_string(),
         original: prompt,
         resultado,
     }));
-    ui::request_repaint();
+    state.repaint();
 
     Ok(())
 }
 
-fn handle_show_history(
-    history: &Arc<Mutex<History>>,
-    ui_tx: &std::sync::mpsc::Sender<UiCommand>,
-) -> Result<()> {
-    let hist = history
+fn handle_show_history(state: &AppState) -> Result<()> {
+    let hist = state
+        .history
         .lock()
         .map_err(|_| crate::error::AppError::msg("Error de lock en historial"))?;
 
@@ -298,11 +281,11 @@ fn handle_show_history(
         })
         .collect();
 
-    let _ = ui_tx.send(UiCommand::ShowHistory(HistoryData {
+    let _ = state.ui_tx.send(UiCommand::ShowHistory(HistoryData {
         entries,
         selected: 0,
     }));
-    ui::request_repaint();
+    state.repaint();
 
     Ok(())
 }
@@ -311,54 +294,54 @@ fn handle_show_history(
 // Helpers de obtencion de texto
 // ---------------------------------------------------------------------------
 
-fn obtener_texto_para_corregir(clipboard: &Arc<ClipboardManager>) -> Result<String> {
-    clipboard.backup()?;
-    clipboard.clear()?;
+fn obtener_texto_para_corregir(state: &AppState) -> Result<String> {
+    state.clipboard.backup()?;
+    state.clipboard.clear()?;
 
-    KeySimulator::copy()?;
+    KeySimulator::copy(state.hook_modifier)?;
     std::thread::sleep(std::time::Duration::from_millis(150));
-    let texto = clipboard.get_text()?;
+    let texto = state.clipboard.get_text()?;
 
     if texto.trim().is_empty() {
-        clipboard.restore()?;
-        KeySimulator::select_all()?;
+        state.clipboard.restore()?;
+        KeySimulator::select_all(state.hook_modifier)?;
         std::thread::sleep(std::time::Duration::from_millis(100));
-        clipboard.clear()?;
-        KeySimulator::copy()?;
+        state.clipboard.clear()?;
+        KeySimulator::copy(state.hook_modifier)?;
         std::thread::sleep(std::time::Duration::from_millis(150));
-        let texto = clipboard.get_text()?;
+        let texto = state.clipboard.get_text()?;
 
         if texto.trim().is_empty() {
             tracing::warn!("No hay texto para corregir.");
-            clipboard.restore()?;
+            state.clipboard.restore()?;
             return Ok(String::new());
         }
 
         if texto.len() > 3000 {
-            clipboard.restore()?;
+            state.clipboard.restore()?;
             KeySimulator::end()?;
             std::thread::sleep(std::time::Duration::from_millis(50));
             KeySimulator::shift_home()?;
             std::thread::sleep(std::time::Duration::from_millis(100));
-            clipboard.clear()?;
-            KeySimulator::copy()?;
+            state.clipboard.clear()?;
+            KeySimulator::copy(state.hook_modifier)?;
             std::thread::sleep(std::time::Duration::from_millis(150));
-            let texto = clipboard.get_text()?;
+            let texto = state.clipboard.get_text()?;
 
             if texto.trim().is_empty() || texto.len() > 1000 {
                 tracing::warn!("Texto muy largo. Selecciona manualmente.");
-                clipboard.restore()?;
+                state.clipboard.restore()?;
                 return Ok(String::new());
             }
 
-            clipboard.restore()?;
+            state.clipboard.restore()?;
             return Ok(texto);
         }
 
-        clipboard.restore()?;
+        state.clipboard.restore()?;
         return Ok(texto);
     }
 
-    clipboard.restore()?;
+    state.clipboard.restore()?;
     Ok(texto)
 }
