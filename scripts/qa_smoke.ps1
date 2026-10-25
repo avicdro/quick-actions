@@ -10,7 +10,7 @@
 #         (equivale a la X) y dumpea: debe volver a TOOLWINDOW offscreen.
 # Escribe reporte en logs\qa_<fase>.txt y captura logs\qa_<fase>.png.
 # Termina matando TODOS los quick-actions.exe (idempotente).
-param([ValidateSet("boot","show","tray","close")][string]$Phase = "boot", [int]$WaitSec = 3)
+param([ValidateSet("boot","show","tray","close")][string]$Phase = "boot", [int]$WaitSec = 3, [int]$CommandId = 1001)
 
 $ErrorActionPreference = "Continue"
 $exe   = "C:\quick-actions\quick-actions.exe"
@@ -79,8 +79,8 @@ if ($alive) {
     if ($global:trayHwnd -ne [IntPtr]::Zero) {
       # Si el titulo del main aun es "QuickActions" (estado de arranque),
       # WM_COMMAND funciona igual; si ya es "Quick Actions", lo busca igual.
-      [void][QAW]::PostMessage($global:trayHwnd, 0x0111, [IntPtr]1001, [IntPtr]::Zero)
-      "tray: WM_COMMAND(1001) inyectado" | Out-File $report -Append -Encoding utf8
+      [void][QAW]::PostMessage($global:trayHwnd, 0x0111, [IntPtr]$CommandId, [IntPtr]::Zero)
+      "tray: WM_COMMAND($CommandId) inyectado" | Out-File $report -Append -Encoding utf8
       Start-Sleep -Seconds 2
 
       if ($Phase -eq "close") {

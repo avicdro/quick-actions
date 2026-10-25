@@ -269,7 +269,7 @@ impl QuickActionsApp {
 
         ui.label(
             egui::RichText::new(&data.titulo)
-                .color(egui::Color32::from_rgb(0, 0, 128))
+                .color(theme::ACCENT) // L8: antes navy-sobre-navy, invisible
                 .strong(),
         );
         ui.add_sized(
@@ -536,34 +536,62 @@ impl QuickActionsApp {
 
                 // ================================================== Hotkeys
                 settings_card(ui, "Atajos", |ui| {
-                    // Modificador (alt/capslock) — requiere reinicio (statics).
+                    // L8: filas alineadas en grid (label a la izquierda con
+                    // dos puntos, como la card Ollama — antes el label del
+                    // combo quedaba a la derecha y floto sin columna).
                     let modifier_applied = self.state.hook_modifier.name().to_lowercase();
                     let mut modifier_changed = false;
-                    egui::ComboBox::from_label("Modificador")
-                        .selected_text(cfg.hotkeys.modifier.clone())
-                        .width(140.0)
-                        .show_ui(ui, |ui| {
-                            if ui
-                                .selectable_value(
-                                    &mut cfg.hotkeys.modifier,
-                                    "alt".to_string(),
-                                    "alt",
-                                )
-                                .clicked()
-                            {
-                                modifier_changed = true;
+                    let mut caps_changed = false;
+                    let mut caps_toggle = false;
+                    egui::Grid::new("grid_hotkeys_cfg")
+                        .num_columns(2)
+                        .spacing([16.0, 11.0])
+                        .show(ui, |ui| {
+                            ui.label("Modificador:");
+                            let combo_mod = egui::ComboBox::from_id_salt("combo_modificador")
+                                .selected_text(cfg.hotkeys.modifier.clone())
+                                .width(140.0)
+                                .show_ui(ui, |ui| {
+                                    if ui
+                                        .selectable_value(
+                                            &mut cfg.hotkeys.modifier,
+                                            "alt".to_string(),
+                                            "alt",
+                                        )
+                                        .clicked()
+                                    {
+                                        modifier_changed = true;
+                                    }
+                                    if ui
+                                        .selectable_value(
+                                            &mut cfg.hotkeys.modifier,
+                                            "capslock".to_string(),
+                                            "capslock",
+                                        )
+                                        .clicked()
+                                    {
+                                        modifier_changed = true;
+                                    }
+                                });
+                            let _ = combo_mod;
+                            ui.end_row();
+
+                            // Capsmode: derivar bool <-> "toggle"/"hold"; solo con capslock.
+                            caps_toggle = cfg.hotkeys.capsmode == "toggle";
+                            ui.label("CapsLock:");
+                            let caps_checked = ui.add_enabled(
+                                cfg.hotkeys.modifier == "capslock",
+                                egui::Checkbox::new(
+                                    &mut caps_toggle,
+                                    "modo toggle (tap latched; ya no alterna mayusculas)",
+                                ),
+                            );
+                            if caps_checked.changed() {
+                                caps_changed = true;
                             }
-                            if ui
-                                .selectable_value(
-                                    &mut cfg.hotkeys.modifier,
-                                    "capslock".to_string(),
-                                    "capslock",
-                                )
-                                .clicked()
-                            {
-                                modifier_changed = true;
-                            }
+                            ui.end_row();
                         });
+
                     if modifier_changed {
                         let _ = crate::config::Config::write_config_key(
                             &self.state.config_path,
@@ -582,20 +610,11 @@ impl QuickActionsApp {
                         );
                     }
 
-                    // Capsmode: derivar bool <-> "toggle"/"hold"; solo con capslock.
                     let capsmode_applied = match self.state.hook_capsmode {
                         crate::hotkeys::CapsMode::Toggle => "toggle",
                         crate::hotkeys::CapsMode::Hold => "hold",
                     };
-                    let mut caps_toggle = cfg.hotkeys.capsmode == "toggle";
-                    let caps_checked = ui.add_enabled(
-                        cfg.hotkeys.modifier == "capslock",
-                        egui::Checkbox::new(
-                            &mut caps_toggle,
-                            "CapsLock modo toggle (tap latched; ya no alterna mayusculas)",
-                        ),
-                    );
-                    if caps_checked.changed() {
+                    if caps_changed {
                         cfg.hotkeys.capsmode =
                             if caps_toggle { "toggle" } else { "hold" }.to_string();
                         let _ = crate::config::Config::write_config_key(
@@ -616,7 +635,7 @@ impl QuickActionsApp {
                     }
 
                     // Pausa modular per-atajo (U3): grid 2 columnas.
-                    ui.add_space(4.0);
+                    ui.add_space(6.0);
                     ui.label(
                         egui::RichText::new("Habilitar individualmente:").color(theme::TEXT_DIM),
                     );
@@ -1381,12 +1400,17 @@ fn apply_theme(ctx: &egui::Context) {
             spread: 2.0,
             color: Color32::from_black_alpha(140),
         };
-        v.selection.bg_fill = Color32::from_rgba_premultiplied(255, 201, 60, 70);
-        v.selection.stroke = Stroke::new(1.0, theme::ACCENT);
+        // L8: seleccion de texto legible en TODO (TextEdit y etiquetas):
+        // fondo ambar OSCURO opaco + texto claro (egui 0.29: el texto del
+        // item seleccionado usa selection.stroke.color; el translucido
+        // amarillo anterior tapaba las letras y los items iban ambar-sobre-
+        // ambar).
+        v.selection.bg_fill = Color32::from_rgb(84, 64, 22);
+        v.selection.stroke = Stroke::new(1.0, theme::TEXT);
 
-        // Rounding global.
-        v.window_rounding = 8.0.into();
-        v.menu_rounding = 6.0.into();
+        // Rounding global (L8: radios 12 en superficies, 8 en widgets).
+        v.window_rounding = 12.0.into();
+        v.menu_rounding = 10.0.into();
         for w in [
             &mut v.widgets.noninteractive,
             &mut v.widgets.inactive,
@@ -1394,8 +1418,16 @@ fn apply_theme(ctx: &egui::Context) {
             &mut v.widgets.active,
             &mut v.widgets.open,
         ] {
-            w.rounding = egui::Rounding::same(6.0);
+            w.rounding = egui::Rounding::same(8.0);
         }
+
+        // L8: sombra de popups/menus (combos) — offset + blur real.
+        v.popup_shadow = Shadow {
+            offset: Vec2::new(0.0, 6.0),
+            blur: 18.0,
+            spread: 1.0,
+            color: Color32::from_black_alpha(150),
+        };
         // V1 a11y: checkmarks e iconos bien visibles (texto claro, acento en
         // hover/activo); los strokes mas gruesos para baja vision.
         v.widgets.noninteractive.fg_stroke = Stroke::new(1.6, theme::TEXT_DIM);
@@ -1439,13 +1471,18 @@ fn apply_theme(ctx: &egui::Context) {
 /// V1: card de seccion para la pestana Ajustes (frame amurallado con
 /// titulo acento). `body` dibuja el contenido dentro del card.
 fn settings_card<R>(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui) -> R) {
-    ui.add_space(6.0);
+    // L8: ritmo de secciones — mas aire ARRIBA de la card (heading rule:
+    // mas espacio arriba que abajo) y ancho completo uniforme (antes cada
+    // card floto al tamano de su contenido, con anchos desparejos).
+    ui.add_space(12.0);
     egui::Frame::none()
         .fill(theme::CARD)
-        .rounding(egui::Rounding::same(10.0))
+        .rounding(egui::Rounding::same(12.0))
         .stroke(egui::Stroke::new(1.0, theme::STROKE))
-        .inner_margin(egui::Margin::same(14.0))
+        .inner_margin(egui::Margin::same(16.0))
         .show(ui, |ui| {
+            // Ancho completo: la card ocupa todo el panel disponible.
+            ui.set_width(ui.available_width());
             ui.vertical(|ui| {
                 ui.label(
                     egui::RichText::new(title)
@@ -1453,7 +1490,7 @@ fn settings_card<R>(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui:
                         .size(16.5)
                         .color(theme::ACCENT),
                 );
-                ui.add_space(4.0);
+                ui.add_space(6.0);
                 body(ui);
             });
         });

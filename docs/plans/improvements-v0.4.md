@@ -89,3 +89,4 @@
 | 2026-10-25 | V4fix | — | egui#5229 impedía reabrir: en vez de Visible(false), WS_EX_TOOLWINDOW via `set_toolwindow()` (FindWindowW+pid check); reopen OK con tab Ayuda/Ajustes |
 | 2026-10-25 | V5 | — | arranque solo-tray: `set_toolwindow(true)` en primer frame (eframe fuerza visible tras el 1er frame, PR2279); `main_hwnd()` con EnumWindows fallback pre-titulo |
 | 2026-10-25 | V6 | — | QA destapa 3 raíces: eframe no pinta hasta 1er repaint (fix: Title+repaint en closure cc); APPWINDOW vs TOOLWINDOW (tool=+TOOLWINDOW −APPWINDOW con hide/show); fullscreen-cover (present_main_window topmost-poke). `--show` + scripts QA |
+| 2026-10-25 | L8 | — | pulido de diseño (skill impeccable/Operate): selección de texto ámbar-oscuro + texto claro (egui 0.29: texto del item usa selection.stroke.color); cards full-width uniformes + radios 12 + aire arriba 12px; Atajos en grid alineado (Modificador:/CapsLock:); título de Resultado ámbar (era navy sobre navy); popup_shadow |
