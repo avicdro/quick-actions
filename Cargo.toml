@@ -1,6 +1,6 @@
 [package]
 name = "quick-actions"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 authors = ["avicdro"]
 description = "Suite de atajos globales para IA y productividad (migracion AHK)"
@@ -41,7 +41,8 @@ tracing-appender = "0.2"
 arboard = "3.5"
 # Simulate keypresses
 enigo = "0.2"
-# GUI flotante (glow = OpenGL, mas ligero que wgpu, no activa GPU dedicada/NVIDIA overlay)
+# GUI flotante — renderer Wgpu (L9/B1: Backends::PRIMARY + LowPower; sin iGPU
+# en el equipo de referencia, va a la dGPU de todas formas — ver N1)
 eframe = { version = "0.29", default-features = false, features = ["glow", "wgpu"] }
 egui = "0.29"
 # Windows API (keyboard hook + tray icon)
