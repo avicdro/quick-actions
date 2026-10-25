@@ -39,7 +39,7 @@ arboard = "3.5"
 # Simulate keypresses
 enigo = "0.2"
 # GUI flotante (glow = OpenGL, mas ligero que wgpu, no activa GPU dedicada/NVIDIA overlay)
-eframe = { version = "0.29", default-features = false, features = ["glow"] }
+eframe = { version = "0.29", default-features = false, features = ["glow", "wgpu"] }
 egui = "0.29"
 # Windows API (keyboard hook + tray icon)
 windows = { version = "0.58", features = [

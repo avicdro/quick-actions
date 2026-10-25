@@ -239,7 +239,9 @@ impl QuickActionsApp {
             ui.label(egui::RichText::new("Notas de la version:").color(egui::Color32::GRAY));
             ui.add_sized(
                 [ui.available_width(), 200.0],
-                egui::TextEdit::multiline(&mut self.result_original.as_str()).interactive(false),
+                egui::TextEdit::multiline(&mut self.result_original.as_str())
+                    .margin(egui::Margin::symmetric(10.0, 8.0))
+                    .interactive(false),
             );
             ui.add(egui::Separator::default().horizontal());
             let url_click = url.clone();
@@ -262,7 +264,9 @@ impl QuickActionsApp {
         ui.label(egui::RichText::new("Texto original:").color(egui::Color32::GRAY));
         ui.add_sized(
             [ui.available_width(), 120.0],
-            egui::TextEdit::multiline(&mut self.result_original.as_str()).interactive(false),
+            egui::TextEdit::multiline(&mut self.result_original.as_str())
+                .margin(egui::Margin::symmetric(10.0, 8.0))
+                .interactive(false),
         );
 
         ui.add(egui::Separator::default().horizontal());
@@ -274,7 +278,9 @@ impl QuickActionsApp {
         );
         ui.add_sized(
             [ui.available_width(), ui.available_height() - 60.0],
-            egui::TextEdit::multiline(&mut self.result_resultado.as_str()).interactive(false),
+            egui::TextEdit::multiline(&mut self.result_resultado.as_str())
+                .margin(egui::Margin::symmetric(10.0, 8.0))
+                .interactive(false),
         );
 
         ui.horizontal(|ui| {
@@ -452,6 +458,7 @@ impl QuickActionsApp {
                                     if ui
                                         .add(
                                             egui::TextEdit::singleline(&mut cfg.ollama.model)
+                                                .margin(egui::Margin::symmetric(8.0, 6.0))
                                                 .desired_width(190.0)
                                                 .font(egui::TextStyle::Monospace),
                                         )
@@ -502,6 +509,7 @@ impl QuickActionsApp {
                             if ui
                                 .add(
                                     egui::TextEdit::singleline(&mut cfg.ollama.endpoint)
+                                        .margin(egui::Margin::symmetric(8.0, 6.0))
                                         .hint_text("http://localhost:11434/api/generate")
                                         .desired_width(400.0),
                                 )
@@ -736,6 +744,7 @@ impl QuickActionsApp {
                             if ui
                                 .add(
                                     egui::TextEdit::singleline(&mut cfg.app.repository)
+                                        .margin(egui::Margin::symmetric(8.0, 6.0))
                                         .hint_text("usuario/repo")
                                         .desired_width(200.0),
                                 )
@@ -905,6 +914,12 @@ impl eframe::App for QuickActionsApp {
                 // Barra de pestanas (V1: pills legibles, acento en activa).
                 ui.horizontal(|ui| {
                     ui.add_space(4.0);
+                    // L9: tab activa = SOLO borde ambar, sin relleno (feedback
+                    // usuario: el chip opaco se veia pesado). El scope-style
+                    // de este hijo neutraliza el fill de seleccion solo para
+                    // estas tabs (la seleccion de texto global queda intacta).
+                    ui.style_mut().visuals.selection.bg_fill = egui::Color32::TRANSPARENT;
+                    ui.style_mut().visuals.selection.stroke = egui::Stroke::new(1.5, theme::ACCENT);
                     let tabs = [
                         (Tab::Result, "Resultado"),
                         (Tab::History, "Historial"),
@@ -913,17 +928,26 @@ impl eframe::App for QuickActionsApp {
                     ];
                     for (tab, label) in tabs {
                         let selected = self.current_tab == tab;
-                        // V3: sobre el chip ambar de seleccion, texto oscuro
-                        // (contraste); inactivas dim legibles.
+                        // L9: texto ambar si activa, dim lo demas (con borde
+                        // solo, el relleno oscuro ya no pide texto oscuro).
                         let mut text = egui::RichText::new(label).size(15.0).color(if selected {
-                            egui::Color32::from_rgb(33, 26, 8)
+                            theme::ACCENT
                         } else {
                             theme::TEXT_DIM
                         });
                         if selected {
                             text = text.strong();
                         }
-                        if ui.selectable_label(selected, text).clicked() {
+                        let resp = ui.selectable_label(selected, text);
+                        if selected {
+                            // La parrilla del chip activo (borde redondeado).
+                            ui.painter().rect_stroke(
+                                resp.rect.expand(3.0),
+                                8.0,
+                                egui::Stroke::new(1.5, theme::ACCENT),
+                            );
+                        }
+                        if resp.clicked() {
                             self.current_tab = tab;
                         }
                     }

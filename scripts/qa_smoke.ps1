@@ -37,6 +37,7 @@ public class QAW {
   [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int i);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr wp, IntPtr lp);
+  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
 }
 "@
 }
@@ -83,15 +84,28 @@ if ($alive) {
       "tray: WM_COMMAND($CommandId) inyectado" | Out-File $report -Append -Encoding utf8
       Start-Sleep -Seconds 2
 
+      # Captura del CONTENIDO de la ventana main (PrintWindow): valida el
+      # render aunque haya un juego fullscreen por encima (CopyFromScreen
+      # solo ve el compositor).
+      if ($global:mainHwnd -ne [IntPtr]::Zero) {
+        $r2 = New-Object QAW+RECT; [void][QAW]::GetWindowRect($global:mainHwnd, [ref]$r2)
+        $w = [Math]::Max(1, $r2.R - $r2.L)
+        $hh = [Math]::Max(1, $r2.B - $r2.T)
+        $bmp2 = New-Object System.Drawing.Bitmap $w, $hh
+        $g2 = [System.Drawing.Graphics]::FromImage($bmp2)
+        $hdc2 = $g2.GetHdc()
+        [void][QAW]::PrintWindow($global:mainHwnd, $hdc2, 2)  # 2 = PW_RENDERFULLCONTENT
+        $g2.ReleaseHdc($hdc2); $g2.Dispose()
+        $shotWin = Join-Path $dir ("logs\qa_{0}_win.png" -f $Phase)
+        $bmp2.Save($shotWin, [System.Drawing.Imaging.ImageFormat]::Png)
+        $bmp2.Dispose()
+        "windowshot=$shotWin (${w}x${hh})" | Out-File $report -Append -Encoding utf8
+      }
+
       if ($Phase -eq "close") {
-        # Main hwnd puede haber cambiado de titulo (ya no); reenumerar.
-        if ($global:mainHwnd -ne [IntPtr]::Zero) {
-          [void][QAW]::PostMessage($global:mainHwnd, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
-          "close: WM_CLOSE inyectado en main" | Out-File $report -Append -Encoding utf8
-          Start-Sleep -Seconds 2
-        } else {
-          "close: main hwnd no encontrado" | Out-File $report -Append -Encoding utf8
-        }
+        [void][QAW]::PostMessage($global:mainHwnd, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+        "close: WM_CLOSE inyectado en main" | Out-File $report -Append -Encoding utf8
+        Start-Sleep -Seconds 2
       }
     } else {
       "tray: NO se encontro QuickActionsTrayWnd" | Out-File $report -Append -Encoding utf8

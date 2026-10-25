@@ -184,6 +184,18 @@ fn windows_main() {
     let app = QuickActionsApp::new(ui_channels.rx, hotkey_rx, Arc::clone(&state), show_on_start);
 
     let options = eframe::NativeOptions {
+        // L9: renderizador wgpu — GPU INTEGRADA (LowPower) y sin OpenGL
+        // (WGL): una UI trivial no tiene nada que hacer en la dGPU, y el
+        // contexto GL era lo que despertaba al driver NVIDIA (flash negro
+        // + toast del overlay "videojuego" al abrir la GUI). Con
+        // Backends::PRIMARY (Vulkan/Metal/Dx12): nada de ANGLE/WGL.
+        // Si solo hay una dGPU, wgpu usa esa y no empeora nada.
+        renderer: eframe::Renderer::Wgpu,
+        wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
+            supported_backends: eframe::wgpu::Backends::PRIMARY,
+            power_preference: eframe::wgpu::PowerPreference::LowPower,
+            ..Default::default()
+        },
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1.0, 1.0])
             .with_min_inner_size([480.0, 420.0])
