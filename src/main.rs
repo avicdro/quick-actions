@@ -23,6 +23,7 @@ fn main() {
 
 #[cfg(windows)]
 fn windows_main() {
+    use eframe::egui;
     use std::sync::mpsc::channel;
     use std::sync::{Arc, Mutex, RwLock};
 
@@ -176,7 +177,11 @@ fn windows_main() {
 
     // === 7. Iniciar eframe en el thread principal (requerido por Windows) ===
     // El App solo necesita los canales y el AppState compartido.
-    let app = QuickActionsApp::new(ui_channels.rx, hotkey_rx, Arc::clone(&state));
+    //
+    // `--show`: QA/uso manual — abre la ventana principal al arrancar
+    // (simulate clic en el tray Ayuda) sin esperar a que nadie la pida.
+    let show_on_start = std::env::args().any(|a| a == "--show");
+    let app = QuickActionsApp::new(ui_channels.rx, hotkey_rx, Arc::clone(&state), show_on_start);
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
@@ -189,7 +194,24 @@ fn windows_main() {
         ..Default::default()
     };
 
-    let _ = eframe::run_native("QuickActions", options, Box::new(|_cc| Ok(Box::new(app))));
+    let state_for_cc = Arc::clone(&state);
+    let _ = eframe::run_native(
+        "QuickActions",
+        options,
+        // V6-fix: con with_visible(false) eframe NO lanza ni un frame hasta
+        // que algo pide repaint (p.ej. el primer clic del tray) — todo el
+        // cap de boot (tema + toolwindow) quedaba sin ejecutar y la ventana
+        // nacia con APPWINDOW => boton en taskbar. Aqui cableamos el
+        // contexto YA (hook/tray pueden despertar el UI desde t=0), pedimos
+        // el primer frame y fijamos el titulo definitivo.
+        Box::new(move |cc| {
+            state_for_cc.set_ui_ctx(cc.egui_ctx.clone());
+            cc.egui_ctx
+                .send_viewport_cmd(egui::ViewportCommand::Title("Quick Actions".to_owned()));
+            cc.egui_ctx.request_repaint();
+            Ok(Box::new(app))
+        }),
+    );
 }
 
 /// Registra panics de cualquier thread en `logs/panic.log`.

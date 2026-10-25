@@ -72,6 +72,10 @@ pub struct QuickActionsApp {
 
     /// U5: si ya aplicamos el tema custom (una sola vez al primer frame).
     style_applied: bool,
+    /// V6: cap del arranque en tool-window, aplicado con reintento por
+    /// frame (el titulo del root existe recien al final del frame 1; el
+    /// primer intento no encuentra el HWND y no-op).
+    boot_tool_done: bool,
 }
 
 impl QuickActionsApp {
@@ -80,12 +84,14 @@ impl QuickActionsApp {
         ui_rx: Receiver<UiCommand>,
         hotkey_rx: Receiver<HotkeyCommand>,
         state: Arc<AppState>,
+        show_on_start: bool,
     ) -> Self {
         Self {
             ui_rx,
             hotkey_rx,
             state,
             style_applied: false,
+            boot_tool_done: false,
             result_data: None,
             result_original: String::new(),
             result_resultado: String::new(),
@@ -93,7 +99,9 @@ impl QuickActionsApp {
             history_data: None,
             status: String::new(),
             current_tab: Tab::Result,
-            window_open: false,
+            // QA (--show): abrir la ventana en el arranque (como un clic
+            // del tray, sin interaccion).
+            window_open: show_on_start,
             was_visible: false,
             egui_clipboard: None,
             toast_visible: false,
@@ -809,10 +817,16 @@ impl eframe::App for QuickActionsApp {
         if !self.style_applied {
             apply_theme(ctx);
             self.style_applied = true;
-            // V5: al arrancar SOLO tray — eframe muestra la ventana tras el
-            // primer frame (anti-flash, egui PR2279) ignorando visible(false);
-            // la capamos como tool window (offscreen 1x1 sin botón taskbar).
-            set_toolwindow(true);
+        }
+
+        // V5/V6: cap del arranque en tool window (solo-tray). Reintento por
+        // frame hasta que pega: eframe muestra el root tras el primer frame
+        // (anti-flash, egui PR2279) y el titulo 'QuickActions' tambien lo
+        // aplica egui al final de ese frame — en el frame 1 el HWND no es
+        // localizable y el intento no-op deja el boton de taskbar.
+        // (Con --show el open-block de abajo lo desactiva en el mismo frame.)
+        if !self.window_open && !self.boot_tool_done {
+            self.boot_tool_done = set_toolwindow(true);
         }
 
         // Inicializar clipboard cacheado si aun no existe.
@@ -834,7 +848,7 @@ impl eframe::App for QuickActionsApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Title("Quick Actions".to_string()));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(true));
-                set_toolwindow(false); // V4-fix: volver a ventana normal
+                self.boot_tool_done = set_toolwindow(false); // V4-fix: ventana normal
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(900.0, 700.0)));
                 let monitor = ctx
                     .input(|i| i.viewport().monitor_size)
@@ -843,6 +857,10 @@ impl eframe::App for QuickActionsApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                // V6: subirla por encima de todo (juego fullscreen, apps)
+                // — egui Focus solo puede fallar con foreground-lock y la
+                // ventana quedaba detras, "invisible" para el usuario.
+                present_main_window();
             } else {
                 // V4-fix: NO usar ViewportCommand::Visible(false) — bug egui
                 // (emilk/egui#5229, #3655): una viewport que se pasa a
@@ -1139,26 +1157,37 @@ pub mod theme {
 ///
 /// Fast path: FindWindowW por titulo exacto ("Quick Actions", fijado al
 /// abrir). Fallback para el arranque (titulo "QuickActions" del app_name):
-/// EnumWindows y primera top-level visible de este proceso con titulo que
-/// empiece por "Quick" (el viewport del toast tiene titulo vacio).
+/// EnumWindows + el titular EXACTO — sin filtro de visibilidad, porque la
+/// ventana arranca oculta y eframe la revela tras el primer frame
+/// (egui PR2279), DESPUES de cuando aplicamos el toolwindow (V5); por eso
+/// IsWindowVisible fallaba en el boot y quedaba el boton en la taskbar.
+/// El tray ("QuickActionsTray") y el toast (titulo vacio) no matchean.
 #[cfg(windows)]
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
 #[cfg(windows)]
 extern "system" fn enum_quick_hwnd(hwnd: windows::Win32::Foundation::HWND, out: LPARAM) -> BOOL {
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
+        GetClassNameW, GetWindowTextW, GetWindowThreadProcessId,
     };
 
     unsafe {
         let mut pid = 0u32;
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        if pid != std::process::id() || !IsWindowVisible(hwnd).as_bool() {
+        if pid != std::process::id() {
             return BOOL(1); // seguir enumerando
         }
+        // Clase del tray excluida explicitamente (su titulo empieza igual).
+        let mut cls = [0u16; 64];
+        let nc = GetClassNameW(hwnd, &mut cls);
+        let class = String::from_utf16_lossy(&cls[..nc.max(0) as usize]);
+        if class == "QuickActionsTrayWnd" {
+            return BOOL(1);
+        }
+
         let mut buf = [0u16; 64];
         let n = GetWindowTextW(hwnd, &mut buf);
         let title = String::from_utf16_lossy(&buf[..n.max(0) as usize]);
-        if title.starts_with("Quick") {
+        if title == "QuickActions" || title == "Quick Actions" {
             let dst = out.0 as *mut windows::Win32::Foundation::HWND;
             if !dst.is_null() {
                 *dst = hwnd;
@@ -1196,30 +1225,53 @@ fn main_hwnd() -> Option<HWND> {
     }
 }
 
-/// V4-fix: alterna WS_EX_TOOLWINDOW en la ventana principal.
+/// V4-fix/V6: alterna WS_EX_TOOLWINDOW en la ventana principal.
 ///
-/// Tool window = aparece en la taskbar ni en Alt-Tab aunque el HWND siga
+/// Tool window = sin boton en taskbar ni Alt-Tab aunque el HWND siga
 /// tecnicamente visible (el truco de egui de ventana offscreen). Con esto
 /// el "cerrar = hide" funciona sin el bug de Visible(false) de egui.
+///
+/// Devuelve `true` si encontro el HWND y dejo el estilo aplicado. En el
+/// arranque puede fallar: el titulo del root lo aplica egui al FINAL del
+/// primer frame, de modo que en el frame 1 el EnumWindows-match no hay
+/// nada que buscar — el llamador reintenta por frame mientras sea false.
 #[cfg(windows)]
-fn set_toolwindow(tool: bool) {
-    use windows::Win32::Foundation::HWND;
+fn set_toolwindow(tool: bool) -> bool {
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, SWP_FRAMECHANGED,
-        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_EX_TOOLWINDOW,
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
+        SW_SHOWNOACTIVATE, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
     };
 
-    let Some(hwnd) = main_hwnd() else { return };
+    let Some(hwnd) = main_hwnd() else {
+        return false;
+    };
 
     unsafe {
         // GWL_EXSTYLE es WINDOW_LONG_PTR_INDEX (0.58 devuelve isize).
+        //
+        // IMPORTANTE (dump de QA): winit crea la ventana con
+        // WS_EX_APPWINDOW (0x40000) — con APPWINDOW presente la taskbar
+        // MUESTRA el boton aunque tambien este TOOLWINDOW. Regla canonica:
+        // tool = set TOOLWINDOW + clear APPWINDOW; normal = inverso.
         let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-        let ex = if tool {
-            ex | (WS_EX_TOOLWINDOW.0 as isize)
+        let was_tool = ex & (WS_EX_TOOLWINDOW.0 as isize) != 0;
+        let desired = if tool {
+            (ex | (WS_EX_TOOLWINDOW.0 as isize)) & !(WS_EX_APPWINDOW.0 as isize)
         } else {
-            ex & !(WS_EX_TOOLWINDOW.0 as isize)
+            (ex | (WS_EX_APPWINDOW.0 as isize)) & !(WS_EX_TOOLWINDOW.0 as isize)
         };
-        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex);
+        if was_tool == tool {
+            let hwnd_addr = hwnd.0 as usize;
+            tracing::debug!("set_toolwindow({tool}): ya estaba (hwnd=0x{hwnd_addr:X})");
+            return true;
+        }
+        // Cambiar ex-style con la ventana VISIBLE no actualiza la taskbar:
+        // hay que ocultar → estilo → volver a mostrar (canonico Win32).
+        if tool {
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, desired);
         // FRAMECHANGED para que la taskbar aplique el cambio al momento.
         let _ = SetWindowPos(
             hwnd,
@@ -1230,11 +1282,88 @@ fn set_toolwindow(tool: bool) {
             0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE,
         );
+        // Reaparecer tras el hide de arriba (offscreen 1x1: el usuario no
+        // nota ni el parpadeo; la taskbar si solto su boton).
+        if tool {
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        }
+        // QA: trazar el ex-style real tras aplicar (la taskbar puede
+        // re-estilizar al set_visible del eframe tras el primer frame).
+        let ex_now = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let tool_now = ex_now & (WS_EX_TOOLWINDOW.0 as isize) != 0;
+        let stuck = tool_now == tool;
+        let hwnd_addr = hwnd.0 as usize;
+        if !stuck {
+            tracing::warn!(
+                "set_toolwindow({tool}) NO pego: ex deseo=0x{ex:X} ex real=0x{ex_now:X} (hwnd=0x{hwnd_addr:X})"
+            );
+        } else {
+            tracing::info!("set_toolwindow({tool}): ok (ex=0x{ex_now:X}, hwnd=0x{hwnd_addr:X})");
+        }
+
+        stuck
+    }
+}
+
+/// Presenta la ventana principal por encima de todo lo visible.
+///
+/// Contexto (bug del usuario en fullscreen): egui `Focus` no puede
+/// activarnos desde un proceso de fondo (foreground lock: el clic del tray
+/// lo consumio Explorer, no nosotros), asi que la ventana quedaba DETRAS de
+/// un juego en fullscreen y se percibia "no aparece". El poke topmost→no
+/// topmost la sube al tope del z-order sin activar, y el
+/// SetForegroundWindow best-effort le roba el foco cuando Windows lo
+/// permite (o simplemente queda visible y clickeable).
+#[cfg(windows)]
+fn present_main_window() {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        BringWindowToTop, SetForegroundWindow, SetWindowPos, ShowWindow, HWND_NOTOPMOST,
+        HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_RESTORE,
+        SW_SHOWNOACTIVATE,
+    };
+
+    let Some(hwnd) = main_hwnd() else { return };
+
+    unsafe {
+        // Restaurar si acaso estaba minimizada; si no, no-op seguro.
+        if windows::Win32::UI::WindowsAndMessaging::IsIconic(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        } else {
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        }
+        // Poke de z-order: TOPMOST una pasada + NOTOPMOST → queda sobre
+        // ventanas normales (incluido un juego fullscreen-borderless) sin
+        // quedarse clavada always-on-top para siempre.
+        let _ = SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOACTIVATE,
+        );
+        let _ = SetWindowPos(
+            hwnd,
+            HWND_NOTOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOACTIVATE,
+        );
+        let _ = BringWindowToTop(hwnd);
+        let _ = SetForegroundWindow(hwnd); // best-effort (puede ser denegado)
     }
 }
 
 #[cfg(not(windows))]
-fn set_toolwindow(_tool: bool) {}
+fn present_main_window() {}
+
+#[cfg(not(windows))]
+fn set_toolwindow(_tool: bool) -> bool {
+    false
+}
 
 /// U5+V1: aplica el tema visual del app (dark navy + acento ambar) una vez.
 fn apply_theme(ctx: &egui::Context) {

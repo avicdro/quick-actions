@@ -305,6 +305,7 @@ graph TD
 | 2026-10-18 | P | P7 CapsLock como modificador configurable (hold/toggle) | `05b9226` | hotkeys cross → 31 tests |
 | 2026-10-19 | — | Doc actualizado al estado post-P1–P7 | *(commit docs)* | AppState sketch real, 5.8 hecho |
 | 2026-10-25 | 1 | 1.3 AppState: elimina statics OnceLock (SENDER/SUSPENDED/MODIFIER/CAPS_MODE/CONTEXT/TRAY_DATA/LATCHED) → inyección via `start_listener` + `GWLP_USERDATA` del tray + `HookState` thread-local | *(esta pasada)* | refresh_models y RepaintFn migrados a AppState/ui_protocol |
+| 2026-10-25 | — | QA automatizada en Windows real: `scripts/qa_smoke.ps1` (boot/show/tray/close con WM_COMMAND+WM_CLOSE inyectados, dumps y screenshots) + `qa_live.ps1` + flag `--show` — el ciclo tray se valida SIN el usuario | *(esta pasada)* | destapó APPWINDOW vs TOOLWINDOW y el frame-no-repaint del boot |
 
 ---
 

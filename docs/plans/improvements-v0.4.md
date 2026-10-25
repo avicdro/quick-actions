@@ -64,6 +64,15 @@
   - NOTA: el titlebar rojo es el accent de Windows del usuario, no del app
   - Implementado: `theme` module (paleta nominal), `apply_theme` una vez (`style_applied`), toast `BG_ELEV`+borde ámbar pulsante+rounding 10, `key_badge` chip, help reescrito con filas `{mod}+{key}` antes de nota toggles, historial vacío tintado dim, window_shadow bonito. `ShowHelp` queda por compatibilidad (el payload ya no se muestra)
 
+### Ronda 4 (feedback post-V5, QA automatizado)
+
+- [x] **V6 — Boot/open/close QA-driven (root causes reales)**:
+  - **Causa raiz del boton en taskbar**: con `with_visible(false)` eframe NO lanza ni un frame de `update()` hasta que algo externo pide repaint (el clic del tray lo hace, por eso parecia intermitente) → el cap V5 del primer frame nunca corria; la ventana nacia con `WS_EX_APPWINDOW` de winit
+  - Fix de raiz: en la closure de `run_native`, `set_ui_ctx(cc.egui_ctx)` + `ViewportCommand::Title("Quick Actions")` + `request_repaint()` (primer frame desde t=0; hook/tray pueden despertar el UI siempre)
+  - `set_toolwindow(bool) -> bool` con regla canonica: tool = `TOOLWINDOW↑ APPWINDOW↓` (con APPWINDOW, la taskbar mantiene el boton aunque haya TOOLWINDOW), `ShowWindow(SW_HIDE)` → estilo → `SW_SHOWNOACTIVATE` (cambiar ex-style con ventana visible no refresca la taskbar), y **retry por frame** (`boot_tool_done`) hasta que pega
+  - `present_main_window()` al abrir: `IsIconic?SW_RESTORE` + poke `TOPMOST→NOTOPMOST` + `BringWindowToTop` + `SetForegroundWindow` best-effort — soluciona "abre detras de un juego fullscreen" (foreground lock deniega activar desde procesos de fondo; el poke de z-order la sube sin activar)
+  - QA: `scripts/qa_smoke.ps1` (fases boot/show/tray/close: lanza, inyecta WM_COMMAND/WM_CLOSE reales, dumpea hwnd/estilos/rects, screenshot) y `scripts/qa_live.ps1` (sin kill, para log async) — corre desde WSL via powershell.exe; flag `--show` para abrir la GUI al arrancar sin interaccion
+
 ## Registro
 
 | Fecha | Ítem | Commit | Notas |
@@ -79,3 +88,4 @@
 | 2026-10-25 | V4 | — | X/Alt-F4 → `Visible(false)` real (desaparece de taskbar/Alt-Tab; queda solo el tray); mostrar vuelve a Visible(true)+focus |
 | 2026-10-25 | V4fix | — | egui#5229 impedía reabrir: en vez de Visible(false), WS_EX_TOOLWINDOW via `set_toolwindow()` (FindWindowW+pid check); reopen OK con tab Ayuda/Ajustes |
 | 2026-10-25 | V5 | — | arranque solo-tray: `set_toolwindow(true)` en primer frame (eframe fuerza visible tras el 1er frame, PR2279); `main_hwnd()` con EnumWindows fallback pre-titulo |
+| 2026-10-25 | V6 | — | QA destapa 3 raíces: eframe no pinta hasta 1er repaint (fix: Title+repaint en closure cc); APPWINDOW vs TOOLWINDOW (tool=+TOOLWINDOW −APPWINDOW con hide/show); fullscreen-cover (present_main_window topmost-poke). `--show` + scripts QA |
