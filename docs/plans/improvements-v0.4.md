@@ -25,7 +25,7 @@
   - Tab activa: texto oscuro sobre el chip ámbar (ahora ámbar-sobre-ámbar es invisible)
   - ScrollArea de Ajustes: reservar la altura de la fila de botones (`max_height = available - buttons_h 46px`) para que el scroll llegue hasta abajo y los botones nunca se corten
 - [x] **V4 — Semantica tray-app al cerrar**:
-  - X / Alt-F4 → ocultar de verdad con `ViewportCommand::Visible(false)` (hoy solo se mueve a -10000 y queda en la taskbar)
+  - ~~X / Alt-F4 → `Visible(false)`~~ **eigentlicher bug**: egui no reabre una viewport oculta (emilk/egui#5229/#3655) — implementado con Win32: la ventana queda offscreen 1x1 "visible" para winit (frames vivos) y se le pone/quita `WS_EX_TOOLWINDOW` (`set_toolwindow`) — sin taskbar ni Alt-Tab al cerrar; al abrir, estilo normal (+ FindWindowW+pid check para el HWND)
   - Al abrirse (tray/atajos) ya se comporta como ventana normal (V2)
   - OJO a testear: los toasts usan un viewport independiente; si al estar el principal oculto deja de verse un toast, reportar (fallback: window separada con WS_EX_TOOLWINDOW)
 
@@ -73,3 +73,4 @@
 | 2026-10-25 | V1 | — | text_styles 15/14.5/18.5, spacing (10,8)+button_padding(14,7)+icons 22, `TEXT_DIM` aclarado (#BAC3D2), tabs pill strong+accent, cards de Ajustes (`settings_card` + Grid 2 col), checkmarks fg ámbar en hover/activo |
 | 2026-10-25 | V3 | — | tab activa texto oscuro sobre chip ámbar; ScrollArea con `max_height(available-46)` reserva fila de botones |
 | 2026-10-25 | V4 | — | X/Alt-F4 → `Visible(false)` real (desaparece de taskbar/Alt-Tab; queda solo el tray); mostrar vuelve a Visible(true)+focus |
+| 2026-10-25 | V4fix | — | egui#5229 impedía reabrir: en vez de Visible(false), WS_EX_TOOLWINDOW via `set_toolwindow()` (FindWindowW+pid check); reopen OK con tab Ayuda/Ajustes |

@@ -868,6 +868,7 @@ impl eframe::App for QuickActionsApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Title("Quick Actions".to_string()));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(true));
+                set_toolwindow(false); // V4-fix: volver a ventana normal
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(900.0, 700.0)));
                 let monitor = ctx
                     .input(|i| i.viewport().monitor_size)
@@ -877,14 +878,20 @@ impl eframe::App for QuickActionsApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             } else {
-                // V4: ocultar de verdad — la ventana desaparece de la taskbar
-                // y del Alt-Tab (solo queda el icono del tray). Mantengo el
-                // offscreen/1x1 defensivo por si algun driver ignora Visible.
+                // V4-fix: NO usar ViewportCommand::Visible(false) — bug egui
+                // (emilk/egui#5229, #3655): una viewport que se pasa a
+                // invisible deja de pintarse y los comandos posteriores
+                // (Visible(true)) no se aplican: la ventana no reabre.
+                //
+                // Alternativa tray-app: la ventana queda "visible" para
+                // winit (offscreen 1x1, frames y toasts siguen vivos), pero
+                // a nivel Win32 se le pone WS_EX_TOOLWINDOW: sin boton en
+                // taskbar ni Alt-Tab. Al abrir se quita el estilo.
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1.0, 1.0)));
                 ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
                     -10000.0, -10000.0,
                 )));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                set_toolwindow(true);
             }
             self.was_visible = self.window_open;
         }
@@ -1161,6 +1168,64 @@ pub mod theme {
     /// Error (icono/fondo).
     pub const ERROR: Color32 = Color32::from_rgb(200, 80, 80);
 }
+
+/// V4-fix: HWND de la ventana principal (por titulo) verificando que sea
+/// de nuestro propio proceso (evita match con apps ajenas del mismo titulo).
+#[cfg(windows)]
+fn main_hwnd() -> Option<windows::Win32::Foundation::HWND> {
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, GetWindowThreadProcessId};
+
+    unsafe {
+        let hwnd = FindWindowW(None, windows::core::w!("Quick Actions")).ok()?;
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == std::process::id() {
+            Some(hwnd)
+        } else {
+            None
+        }
+    }
+}
+
+/// V4-fix: alterna WS_EX_TOOLWINDOW en la ventana principal.
+///
+/// Tool window = aparece en la taskbar ni en Alt-Tab aunque el HWND siga
+/// tecnicamente visible (el truco de egui de ventana offscreen). Con esto
+/// el "cerrar = hide" funciona sin el bug de Visible(false) de egui.
+#[cfg(windows)]
+fn set_toolwindow(tool: bool) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, SWP_FRAMECHANGED,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_EX_TOOLWINDOW,
+    };
+
+    let Some(hwnd) = main_hwnd() else { return };
+
+    unsafe {
+        // GWL_EXSTYLE es WINDOW_LONG_PTR_INDEX (0.58 devuelve isize).
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let ex = if tool {
+            ex | (WS_EX_TOOLWINDOW.0 as isize)
+        } else {
+            ex & !(WS_EX_TOOLWINDOW.0 as isize)
+        };
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex);
+        // FRAMECHANGED para que la taskbar aplique el cambio al momento.
+        let _ = SetWindowPos(
+            hwnd,
+            HWND(std::ptr::null_mut()),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn set_toolwindow(_tool: bool) {}
 
 /// U5+V1: aplica el tema visual del app (dark navy + acento ambar) una vez.
 fn apply_theme(ctx: &egui::Context) {
