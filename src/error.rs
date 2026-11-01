@@ -2,7 +2,7 @@ use thiserror::Error;
 
 /// Errores tipados de la aplicacion quick-actions.
 ///
-/// Se usa `thiserror` para derivar `Display` y compatibilidad con ` anyhow::Error`.
+/// Se usa `thiserror` para derivar `Display` y `From` (conversion con `?`).
 #[derive(Debug, Error)]
 pub enum AppError {
     /// Error al interactuar con el portapapeles.

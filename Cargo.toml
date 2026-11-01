@@ -25,7 +25,6 @@ toml_edit = "0.22"
 
 # Error handling
 thiserror = "2.0"
-anyhow = "1.0"
 
 # Fechas para historial
 chrono = { version = "0.4", features = ["serde"] }

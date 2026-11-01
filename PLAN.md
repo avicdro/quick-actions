@@ -78,7 +78,7 @@ Replicar `ai-suite-ollama.ahk` al 100%:
 | `arboard` | Portapapeles (cross-platform) |
 | `enigo` | Simular `Ctrl+C`, `Ctrl+A`, `Ctrl+V` |
 | `eframe` + `egui` | Ventanas de resultados |
-| `thiserror` + `anyhow` | Errores tipados + ergonomia en app |
+| `thiserror` | Errores tipados (errores con `Display` y `From`) |
 | `chrono` | Fechas para historial |
 | `windows` | Low-level keyboard hook (WinAPI) |
 
