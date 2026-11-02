@@ -15,8 +15,8 @@
 
 | Bloque | Enfoque | Estado | Prioridad |
 |--------|---------|--------|-----------|
-| C | Bugs y problemas concretos (nuevos) | ⬜ Pendiente | 🔴 Alta |
-| QW | Quick wins accesorios | ⬜ Pendiente | 🟢 Baja |
+| C | Bugs y problemas concretos (nuevos) | ✅ Completado (2026-11-02) | 🔴 Alta |
+| QW | Quick wins accesorios | ✅ Completado (2026-11-02) | 🟢 Baja |
 | F2* | Concurrencia (ya en IMPROVEMENTS Fase 2) | ⬜ Pendiente | 🟡 Media |
 | F1* | Mantenibilidad (ya en IMPROVEMENTS Fase 1) | ⬜ Pendiente | 🟡 Media |
 
@@ -52,14 +52,14 @@ El usuario edita valores que no hacen nada.
   magic number ignorante del monitor.
 
 **Checklist**
-- [ ] `config.rs`: `UiConfig` sin `font_size`, con `scale: f32` (default 1.3)
-- [ ] `config.rs`: `default_toml` actualizado
-- [ ] `config.toml` (repo, template que distribuye el build) actualizado
-- [ ] `ui.rs`: ppp desde config (fallback 1.3 si el valor es basura)
-- [ ] `ui.rs`: tamaño de ventana al abrir desde config (clamp)
-- [ ] Tests de config actualizados (`config_default_values`,
+- [x] `config.rs`: `UiConfig` sin `font_size`, con `scale: f32` (default 1.3)
+- [x] `config.rs`: `default_toml` actualizado
+- [x] `config.toml` (repo, template que distribuye el build) actualizado
+- [x] `ui.rs`: ppp desde config (fallback 1.3 si el valor es basura)
+- [x] `ui.rs`: tamaño de ventana al abrir desde config (clamp)
+- [x] Tests de config actualizados (`config_default_values`,
       `config_parse_full_toml`, `config_parse_partial_toml_uses_defaults`)
-- [ ] `README.md`: bloque de configuración actualizado
+- [x] `README.md`: bloque de configuración actualizado
 
 ---
 
@@ -91,17 +91,17 @@ porque cada llamada usa uno distinto (generate: config, tags: 3s, GitHub:
 5s, updater: 120s).
 
 **Checklist**
-- [ ] `app_state.rs`: campo `pub http: Arc<reqwest::Client>` + param en `new()`
-- [ ] `main.rs`: crear el cliente compartido (fallback `Client::new()`)
-- [ ] `ollama.rs`: `OllamaClient::new(config, client)`; `generate()` con
+- [x] `app_state.rs`: campo `pub http: Arc<reqwest::Client>` + param en `new()`
+- [x] `main.rs`: crear el cliente compartido (fallback `Client::new()`)
+- [x] `ollama.rs`: `OllamaClient::new(config, client)`; `generate()` con
       `.timeout()` por request; `list_models(config, &client)` ya no crea
       cliente propio
-- [ ] `actions.rs`: construir `OllamaClient` con `state.http`
-- [ ] `update_check.rs`: `spawn_check`/`run_manual_check`/`fetch_latest`
+- [x] `actions.rs`: construir `OllamaClient` con `state.http`
+- [x] `update_check.rs`: `spawn_check`/`run_manual_check`/`fetch_latest`
       reciben el cliente compartido
-- [ ] `self_update.rs`: `apply_update`/`download` reciben el cliente
-- [ ] `ui.rs`: llamadores de update-check/apply_update pasan `state.http`
-- [ ] Cross-build windows ok + tests lib ok
+- [x] `self_update.rs`: `apply_update`/`download` reciben el cliente
+- [x] `ui.rs`: llamadores de update-check/apply_update pasan `state.http`
+- [x] Cross-build windows ok + tests lib ok
 
 ---
 
@@ -125,11 +125,11 @@ para que el guard flusha).
   proceso — mismo comportamiento de hoy, pero con log completo.
 
 **Checklist**
-- [ ] `ui_protocol.rs`: variante `Shutdown`
-- [ ] `ui.rs`: `shutting_down` + close no-interceptado en shutdown
-- [ ] `tray.rs`: 2 sitios de EXIT sin `process::exit`
-- [ ] `main.rs`: log final tras `run_native` (visibilidad del flush)
-- [ ] QA manual en Windows: tray → Salir deja log completo y proceso fuera
+- [x] `ui_protocol.rs`: variante `Shutdown`
+- [x] `ui.rs`: `shutting_down` + close no-interceptado en shutdown
+- [x] `tray.rs`: 2 sitios de EXIT sin `process::exit`
+- [x] `main.rs`: log final tras `run_native` (visibilidad del flush)
+- [x] QA manual en Windows: tray → Salir deja log completo y proceso fuera
 
 ---
 
@@ -145,9 +145,9 @@ aceptado: releases `<= v0.2.3` no pueden auto-actualizar (deben instalar
 manual; era un flujo que igualmente era inseguro).
 
 **Checklist**
-- [ ] `self_update.rs`: rama de sums faltante pasa de warn+continuar a
+- [x] `self_update.rs`: rama de sums faltante pasa de warn+continuar a
       error+abortar (con limpieza de temporales)
-- [ ] Doc del módulo actualizado (fail-closed)
+- [x] Doc del módulo actualizado (fail-closed)
 
 ---
 
@@ -174,12 +174,12 @@ Doble acoplamiento texto↔comportamiento:
   claves TOML de persistencia.
 
 **Checklist**
-- [ ] `ui_protocol.rs`: `StatusMsg` + variante tipada; fuera `classify_status`
-- [ ] `ui.rs`: match de `SetStatus` por variante (Clear/Loading/Notice/Error)
-- [ ] Senders migrados: `actions.rs`, `tray.rs`, `self_update.rs`,
+- [x] `ui_protocol.rs`: `StatusMsg` + variante tipada; fuera `classify_status`
+- [x] `ui.rs`: match de `SetStatus` por variante (Clear/Loading/Notice/Error)
+- [x] Senders migrados: `actions.rs`, `tray.rs`, `self_update.rs`,
       `update_check.rs`, `main.rs` (marker update), `ui.rs` interno
-- [ ] `hotkeys/mod.rs`: switch/enabled por enum (con test)
-- [ ] Tests del protocolo actualizados (fuera los de `classify_status`)
+- [x] `hotkeys/mod.rs`: switch/enabled por enum (con test)
+- [x] Tests del protocolo actualizados (fuera los de `classify_status`)
 
 ---
 
@@ -197,11 +197,11 @@ cae al FindWindow si está vacía. El de `single_instance` (otro proceso)
 mantiene `FindWindowW` (la cache no aplica cross-proceso; documentado).
 
 **Checklist**
-- [ ] `app_state.rs`: campo `main_hwnd` (OnceLock, leak-safe)
-- [ ] `ui.rs`: `main_hwnd(state)` con fast-path de cache; firmas
+- [x] `app_state.rs`: campo `main_hwnd` (OnceLock, leak-safe)
+- [x] `ui.rs`: `main_hwnd(state)` con fast-path de cache; firmas
       `set_toolwindow`/`present_main_window` reciben el estado
-- [ ] `single_instance.rs`: comentario (no aplica cache cross-proceso)
-- [ ] Cross-build windows ok
+- [x] `single_instance.rs`: comentario (no aplica cache cross-proceso)
+- [x] Cross-build windows ok
 
 ---
 
@@ -256,3 +256,14 @@ mínima en cada commit (los módulos windows-only no compilan en host).
 | Fecha | Ítem | Commit | Notas |
 |-------|------|--------|-------|
 | 2026-11-02 | — | — | Doc creado; auditoría completa (base v0.2.8) |
+| 2026-11-02 | QW1 (anyhow fuera) | `f37cd29` | dep muerta sin uso en src/ |
+| 2026-11-02 | C1+C2 (config [ui] real) | `e6df639` | `scale` sustituye a `font_size` (muerta); ventana cableada con clamp |
+| 2026-11-02 | C3 (cliente HTTP compartido) | `d5b44d8` | `state.http` + timeouts por-request (3s/5s/120s/config) |
+| 2026-11-02 | C4 (shutdown limpio) | `467537d` | `UiCommand::Shutdown` + watchdog 5s; QA manual en Windows pendiente |
+| 2026-11-02 | C5 (auto-update fail-closed) | `04a49d7` | sin SHA256SUMS se aborta (releases ≤ v0.2.3: manual) |
+| 2026-11-02 | C6 (StatusMsg + hotkeys por enum) | `995a19c` | fuera `classify_status`; bug colateral: spinner eterno en translate |
+| 2026-11-02 | C7 (HWND cacheado) | `7cc2985` | `state.main_hwnd` OnceLock; single_instance sigue FindWindowW (cross-proceso) |
+| 2026-11-02 | QW2+QW3 (log debug + dedup preview) | `b1f1f94` | + fix implícito: truncado por bytes paniqueaba con UTF-8 multi-byte |
+
+Verificación de cada commit: `cargo fmt --all --check` + `cargo test --lib`
+(43 tests) + `cargo build --release --target x86_64-pc-windows-gnu`.
