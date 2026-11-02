@@ -281,6 +281,8 @@ fn windows_main() {
     };
 
     let state_for_cc = Arc::clone(&state);
+    // C4 (v0.5): run_native vuelve cuando el Shutdown del tray deja de
+    // interceptar el close — el cierre limpio flusha el log via WorkerGuard.
     let _ = eframe::run_native(
         "QuickActions",
         options,
@@ -298,6 +300,11 @@ fn windows_main() {
             Ok(Box::new(app))
         }),
     );
+
+    // C4 (v0.5): el eframe loop termino (tray → Salir). Al volver de
+    // windows_main cae el `_guard` del logger y flusha TODO el log pendiente
+    // (los demas threads mueren con el proceso: hook incluido, igual que hoy).
+    tracing::info!("Event loop finalizado. Saliendo (shutdown limpio).");
 }
 
 /// Registra panics de cualquier thread en `logs/panic.log`.

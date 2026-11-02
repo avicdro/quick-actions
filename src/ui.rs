@@ -79,6 +79,10 @@ pub struct QuickActionsApp {
     /// frame (el titulo del root existe recien al final del frame 1; el
     /// primer intento no encuentra el HWND y no-op).
     boot_tool_done: bool,
+    /// C4 (v0.5): salida limpia en curso (tray → Salir). Con este flag el
+    /// update() deja de interceptar el close y egui termina el event loop
+    /// — el log flusha al caer el WorkerGuard de windows_main.
+    shutting_down: bool,
 }
 
 impl QuickActionsApp {
@@ -114,6 +118,7 @@ impl QuickActionsApp {
             toast_expiry: None,
             update_url: None,
             update_tag: None,
+            shutting_down: false,
         }
     }
 
@@ -208,6 +213,11 @@ impl QuickActionsApp {
                 }
                 UiCommand::CloseAll => {
                     self.window_open = false;
+                }
+                // C4: el tray pidio salir de verdad (no hide al tray).
+                UiCommand::Shutdown => {
+                    self.shutting_down = true;
+                    tracing::info!("Shutdown: cierre de la app solicitado (tray).");
                 }
             }
         }
@@ -959,9 +969,17 @@ impl eframe::App for QuickActionsApp {
 
         // Cancelar cierre de ventana (evita que eframe cierre la app).
         // En su lugar, ocultamos la ventana.
+        //
+        // C4: EXCEPCION — si venimos de un Shutdown (tray → Salir), NO
+        // interceptamos: se deja cerrar, `run_native` vuelve y el
+        // WorkerGuard de windows_main flusha el log al caer.
         if ctx.input(|i| i.viewport().close_requested()) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.window_open = false;
+            if self.shutting_down {
+                // dejar que eframe cierre la app
+            } else {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.window_open = false;
+            }
         }
 
         // C2: el zoom de la GUI ya no es un magic number (1.3 fijo que
@@ -1011,6 +1029,14 @@ impl eframe::App for QuickActionsApp {
 
         self.process_hotkeys();
         self.process_ui_commands();
+
+        // C4: en shutdown, pedir el cierre del root en cada frame hasta
+        // que eframe lo ejecute (ViewportCommand::Close marca
+        // close_requested para el frame siguiente; no-sentar CancelClose
+        // arriba deja que la ventana muera y run_native vuelva).
+        if self.shutting_down {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
 
         // Mostrar/ocultar ventana segun estado.
         if self.window_open != self.was_visible {

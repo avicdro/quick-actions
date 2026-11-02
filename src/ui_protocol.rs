@@ -143,6 +143,11 @@ pub enum UiCommand {
     },
     /// Cerrar todas las ventanas.
     CloseAll,
+    /// C4 (v0.5): salir de la app de forma LIMPIA — el UI deja de
+    /// interceptar el close, eframe termina y el `WorkerGuard` del log
+    /// flusha al caer. Envia el tray al pedir "Salir" (ya no
+    /// `std::process::exit`).
+    Shutdown,
 }
 
 /// Canal de comunicacion entre la logica de negocio y el UI thread.

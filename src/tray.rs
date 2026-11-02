@@ -25,6 +25,19 @@ use crate::app_state::AppState;
 use crate::ui_protocol::UiCommand;
 
 const WM_TRAYICON: u32 = WM_USER + 1;
+
+/// C4 (v0.5): cinturon de seguridad del shutdown limpio. Si el UI muere
+/// lentamente (egui/winit cuello en el Close) el proceso quedaria vivo sin
+/// tray ni atajos: a los 5s se fuerza `process::exit` como ultimo recurso.
+/// En el camino normal (UI cierra primero) este thread muere con el
+/// proceso y no hace nada.
+fn spawn_exit_watchdog() {
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        tracing::warn!("Shutdown: watchdog disparado — el UI no cerro en 5s; salida forzada.");
+        std::process::exit(0);
+    });
+}
 const ID_TRAY_SHOW_HELP: u32 = 1001;
 const ID_TRAY_CONFIG: u32 = 1002;
 const ID_TRAY_EXIT: u32 = 1003;
@@ -406,9 +419,20 @@ extern "system" fn tray_wnd_proc(
                         }
                     }
                     ID_TRAY_EXIT => {
+                        // C4 (v0.5): salida limpia — avisamos al UI (deja de
+                        // interceptar el close y egui termina el event loop)
+                        // y PostQuitMessage termina ESTE pump, con lo que el
+                        // tray loop ejecuta su NIM_DELETE. Ya NO
+                        // process::exit: cortaba destrutores y el flush del
+                        // log (WorkerGuard). Watchdog: si el UI no cierra
+                        // (egui cuello), salida forzada a los 5s.
+                        if let Some(data) = tray_state(hwnd) {
+                            let _ = data.state.ui_tx.send(UiCommand::Shutdown);
+                            data.state.repaint();
+                        }
                         tracing::info!("Saliendo via tray menu...");
+                        spawn_exit_watchdog();
                         PostQuitMessage(0);
-                        std::process::exit(0);
                     }
                     _ => {}
                 }
@@ -659,9 +683,12 @@ unsafe fn show_tray_menu(hwnd: HWND) {
             handle_atajos_menu(state, id);
         }
         ID_TRAY_EXIT => {
+            // C4 (v0.5): salida limpia (ver el brazo WM_COMMAND).
+            let _ = state.ui_tx.send(UiCommand::Shutdown);
+            state.repaint();
             tracing::info!("Saliendo via tray menu...");
+            spawn_exit_watchdog();
             PostQuitMessage(0);
-            std::process::exit(0);
         }
         _ => {}
     }
