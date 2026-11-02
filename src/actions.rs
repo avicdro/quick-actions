@@ -7,7 +7,7 @@ use crate::key_sim::KeySimulator;
 use crate::ollama::OllamaClient;
 use crate::prompts;
 use crate::text_utils;
-use crate::ui_protocol::{HistoryData, HistoryEntryView, ResultData, StatusMsg, UiCommand};
+use crate::ui_protocol::{HistoryData, ResultData, StatusMsg, UiCommand};
 
 /// Texto de ayuda mostrado con el hotkey de ayuda o click en tray.
 ///
@@ -266,24 +266,7 @@ fn handle_show_history(state: &AppState) -> Result<()> {
         .lock()
         .map_err(|_| crate::error::AppError::msg("Error de lock en historial"))?;
 
-    let entries: Vec<HistoryEntryView> = hist
-        .entries()
-        .iter()
-        .enumerate()
-        .map(|(i, e)| {
-            let preview = if e.original.len() > 60 {
-                format!("{}...", &e.original[..60])
-            } else {
-                e.original.clone()
-            };
-            HistoryEntryView {
-                index: i + 1,
-                preview,
-                fecha: e.fecha.clone(),
-                original: e.original.clone(),
-            }
-        })
-        .collect();
+    let entries = crate::ui_protocol::history_views(hist.entries());
 
     let _ = state.ui_tx.send(UiCommand::ShowHistory(HistoryData {
         entries,

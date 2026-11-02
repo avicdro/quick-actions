@@ -152,6 +152,36 @@ pub struct HistoryEntryView {
     pub original: String,
 }
 
+/// QW3 (v0.5): UNICO punto de construccion de vistas del historial
+/// (antes el mapeo + truncado del preview estaba duplicado en
+/// `actions.handle_show_history` y en el boton "Actualizar" de `ui.rs`).
+///
+/// Ademas CORRIGE el truncado: antes `&original[..60]` cortaba por BYTES
+/// y paniqueaba si el byte 60 caia a mitad de caracter multi-byte
+/// (acentos, emoji). Ahora trunca por chars, UTF-8 safe.
+#[must_use]
+pub fn history_views(entries: &[crate::history::HistoryEntry]) -> Vec<HistoryEntryView> {
+    entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let preview: String = if e.original.chars().count() > 60 {
+                let mut p: String = e.original.chars().take(60).collect();
+                p.push_str("...");
+                p
+            } else {
+                e.original.clone()
+            };
+            HistoryEntryView {
+                index: i + 1,
+                preview,
+                fecha: e.fecha.clone(),
+                original: e.original.clone(),
+            }
+        })
+        .collect()
+}
+
 /// Comandos que el UI puede recibir.
 #[derive(Debug, Clone)]
 pub enum UiCommand {

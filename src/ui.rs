@@ -131,7 +131,9 @@ impl QuickActionsApp {
     /// Procesa comandos UI del canal (tray, workers).
     fn process_ui_commands(&mut self) {
         while let Ok(cmd) = self.ui_rx.try_recv() {
-            tracing::info!("UI command recibido");
+            // QW2 (v0.5): log por-comando a debug (info llenaba el log
+            // con ruido en cada hotkey/toast del tray).
+            tracing::debug!("UI command recibido");
             match cmd {
                 UiCommand::ShowResult(data) => {
                     self.result_original = data.original.clone();
@@ -402,24 +404,8 @@ impl QuickActionsApp {
         // Boton para recargar historial
         if ui.button("Actualizar").clicked() {
             if let Ok(hist) = self.state.history.lock() {
-                let entries: Vec<HistoryEntryView> = hist
-                    .entries()
-                    .iter()
-                    .enumerate()
-                    .map(|(i, e)| {
-                        let preview = if e.original.len() > 60 {
-                            format!("{}...", &e.original[..60])
-                        } else {
-                            e.original.clone()
-                        };
-                        HistoryEntryView {
-                            index: i + 1,
-                            preview,
-                            fecha: e.fecha.clone(),
-                            original: e.original.clone(),
-                        }
-                    })
-                    .collect();
+                // QW3: dedup del mapeo/truncado (helper unico en ui_protocol).
+                let entries = crate::ui_protocol::history_views(hist.entries());
                 self.history_data = Some(HistoryData {
                     entries,
                     selected: 0,
