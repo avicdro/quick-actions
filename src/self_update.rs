@@ -22,7 +22,7 @@ use std::path::Path;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
-use crate::ui_protocol::{RepaintFn, UiCommand};
+use crate::ui_protocol::{RepaintFn, StatusMsg, UiCommand};
 
 /// Timeout de descarga del updater — POR-REQUEST sobre el cliente
 /// compartido (`AppState::http`); el exe es ~7MB: bien holgado.
@@ -31,7 +31,7 @@ const DL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 const EXE_ASSET: &str = "quick-actions.exe";
 const SUMS_ASSET: &str = "SHA256SUMS.txt";
 
-fn toast(ui_tx: &Sender<UiCommand>, repaint: &RepaintFn, msg: String) {
+fn toast(ui_tx: &Sender<UiCommand>, repaint: &RepaintFn, msg: StatusMsg) {
     let _ = ui_tx.send(UiCommand::SetStatus(msg));
     (repaint)();
 }
@@ -51,12 +51,16 @@ pub fn apply_update(
         toast(
             &ui_tx,
             &repaint,
-            "Error: no se resolvió el exe actual".to_string(),
+            StatusMsg::Error("Error: no se resolvió el exe actual".to_string()),
         );
         return;
     };
     let Some(dir) = exe.parent().map(std::path::Path::to_path_buf) else {
-        toast(&ui_tx, &repaint, "Error: exe sin directorio".to_string());
+        toast(
+            &ui_tx,
+            &repaint,
+            StatusMsg::Error("Error: exe sin directorio".to_string()),
+        );
         return;
     };
 
@@ -65,16 +69,24 @@ pub fn apply_update(
     let prev_file = dir.join("quick-actions.prev.exe");
 
     // === 1. Descarga del exe de la release ===
-    toast(&ui_tx, &repaint, format!("Descargando {tag}..."));
+    toast(
+        &ui_tx,
+        &repaint,
+        StatusMsg::Loading(format!("Descargando {tag}...")),
+    );
     let exe_url = format!("https://github.com/{repo}/releases/download/{tag}/{EXE_ASSET}");
     if let Err(e) = download(&exe_url, &update_file, &http) {
         let _ = std::fs::remove_file(&update_file);
-        toast(&ui_tx, &repaint, format!("Error: descarga falló: {e}"));
+        toast(
+            &ui_tx,
+            &repaint,
+            StatusMsg::Error(format!("Error: descarga falló: {e}")),
+        );
         return;
     }
 
-    // === 2. Verificacion SHA-256 (pro-grade; si el asset de sums no esta,
-    // sigue igual pero lo anota — release viejas no tenian sums) ===
+    // === 2. Verificacion SHA-256 (fail-closed: si el asset de sums no
+    // esta, se ABORTA — release viejas <= v0.2.3 no tenian sums) ===
     let sums_url = format!("https://github.com/{repo}/releases/download/{tag}/{SUMS_ASSET}");
     let sums_tmp = dir.join("SHA256SUMS.tmp");
     match download(&sums_url, &sums_tmp, &http) {
@@ -89,7 +101,9 @@ pub fn apply_update(
                 toast(
                     &ui_tx,
                     &repaint,
-                    "Error: SHA256SUMS no contiene el exe; no aplico nada".to_string(),
+                    StatusMsg::Error(
+                        "Error: SHA256SUMS no contiene el exe; no aplico nada".to_string(),
+                    ),
                 );
                 return;
             };
@@ -98,7 +112,11 @@ pub fn apply_update(
                 Ok(h) => h,
                 Err(e) => {
                     let _ = std::fs::remove_file(&update_file);
-                    toast(&ui_tx, &repaint, format!("Error: hash fallo: {e}"));
+                    toast(
+                        &ui_tx,
+                        &repaint,
+                        StatusMsg::Error(format!("Error: hash fallo: {e}")),
+                    );
                     return;
                 }
             };
@@ -110,7 +128,9 @@ pub fn apply_update(
                 toast(
                     &ui_tx,
                     &repaint,
-                    "Error: hash del binario no coincide; no aplico nada".to_string(),
+                    StatusMsg::Error(
+                        "Error: hash del binario no coincide; no aplico nada".to_string(),
+                    ),
                 );
                 return;
             }
@@ -129,9 +149,11 @@ pub fn apply_update(
             toast(
                 &ui_tx,
                 &repaint,
-                "Error: sin SHA256SUMS en la release no verifico el binario; \
-                 descarga manual desde GitHub Releases"
-                    .to_string(),
+                StatusMsg::Error(
+                    "Error: sin SHA256SUMS en la release no verifico el binario; \
+                     descarga manual desde GitHub Releases"
+                        .to_string(),
+                ),
             );
             return;
         }
@@ -147,14 +169,18 @@ pub fn apply_update(
         toast(
             &ui_tx,
             &repaint,
-            format!("Error: no pude mover el exe actual: {e}"),
+            StatusMsg::Error(format!("Error: no pude mover el exe actual: {e}")),
         );
         return;
     }
     if let Err(e) = std::fs::rename(&update_file, &base) {
         // Rollback: dejar como estaba.
         let _ = std::fs::rename(&prev_file, &base);
-        toast(&ui_tx, &repaint, format!("Error: colocando el nuevo: {e}"));
+        toast(
+            &ui_tx,
+            &repaint,
+            StatusMsg::Error(format!("Error: colocando el nuevo: {e}")),
+        );
         return;
     }
     tracing::info!("Auto-update: swap completado ({tag}).");
@@ -164,7 +190,7 @@ pub fn apply_update(
     toast(
         &ui_tx,
         &repaint,
-        format!("Actualizado a {tag} — reiniciando..."),
+        StatusMsg::Notice(format!("Actualizado a {tag} — reiniciando...")),
     );
 
     match std::process::Command::new(&base).spawn() {
@@ -178,7 +204,7 @@ pub fn apply_update(
             toast(
                 &ui_tx,
                 &repaint,
-                format!("Error: no arrancó el nuevo exe: {e}"),
+                StatusMsg::Error(format!("Error: no arrancó el nuevo exe: {e}")),
             );
         }
     }

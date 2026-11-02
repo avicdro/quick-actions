@@ -59,27 +59,30 @@ pub const HOTKEY_ACTIONS: [(HotkeyCommand, &str, &str); 6] = [
 ];
 
 /// Ley o escribe el interruptor per-atajo correspondiente en la config.
+///
+/// C6 (v0.5): match directo por enum (a prueba de refactor del texto);
+/// `config_field()` queda SOLO para las claves TOML de persistencia.
 pub fn hotkey_switch(cmd: HotkeyCommand, cfg: &mut crate::config::HotkeysConfig) -> &mut bool {
-    match cmd.config_field() {
-        "correct" => &mut cfg.correct,
-        "translate" => &mut cfg.translate,
-        "summarize" => &mut cfg.summarize,
-        "generate" => &mut cfg.generate,
-        "history" => &mut cfg.history,
-        _ => &mut cfg.help,
+    match cmd {
+        HotkeyCommand::Correct => &mut cfg.correct,
+        HotkeyCommand::Translate => &mut cfg.translate,
+        HotkeyCommand::Summarize => &mut cfg.summarize,
+        HotkeyCommand::Generate => &mut cfg.generate,
+        HotkeyCommand::ShowHistory => &mut cfg.history,
+        HotkeyCommand::ShowHelp => &mut cfg.help,
     }
 }
 
 /// U3: un atajo concreto esta habilitado?
 #[must_use]
 pub fn is_hotkey_enabled(cmd: HotkeyCommand, cfg: &crate::config::HotkeysConfig) -> bool {
-    match cmd.config_field() {
-        "correct" => cfg.correct,
-        "translate" => cfg.translate,
-        "summarize" => cfg.summarize,
-        "generate" => cfg.generate,
-        "history" => cfg.history,
-        _ => cfg.help,
+    match cmd {
+        HotkeyCommand::Correct => cfg.correct,
+        HotkeyCommand::Translate => cfg.translate,
+        HotkeyCommand::Summarize => cfg.summarize,
+        HotkeyCommand::Generate => cfg.generate,
+        HotkeyCommand::ShowHistory => cfg.history,
+        HotkeyCommand::ShowHelp => cfg.help,
     }
 }
 
@@ -211,6 +214,27 @@ mod tests {
             .map(|(c, _, _)| c.config_field())
             .collect();
         assert_eq!(fields.len(), 6);
+    }
+
+    #[test]
+    fn hotkey_switches_map_by_enum() {
+        use crate::config::HotkeysConfig;
+
+        // C6: el switch/enabled mapea por enum; tocar UN campo del enum no
+        // toca ningun otro (antes, con matching sobre strings, cualquier
+        // refactor de config_field podia solapar claves silenciosamente).
+        for (cmd, _, _) in HOTKEY_ACTIONS {
+            let mut cfg = HotkeysConfig::default();
+            *hotkey_switch(cmd, &mut cfg) = false;
+            for (other, _, _) in HOTKEY_ACTIONS {
+                let expected = other != cmd;
+                assert_eq!(
+                    is_hotkey_enabled(other, &cfg),
+                    expected,
+                    "{other:?} afectado al apagar {cmd:?}"
+                );
+            }
+        }
     }
 
     #[test]

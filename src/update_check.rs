@@ -11,7 +11,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 
 use crate::config::AppConfig;
-use crate::ui_protocol::UiCommand;
+use crate::ui_protocol::{StatusMsg, UiCommand};
 
 /// Timeout de la consulta (por-request sobre el cliente compartido; no
 /// colgamos el arranque ni el thread).
@@ -106,16 +106,16 @@ pub fn run_manual_check(repo: &str, http: Arc<reqwest::Client>, ui_tx: Sender<Ui
                     body: release.body,
                 });
             } else {
-                let _ = ui_tx.send(UiCommand::SetStatus(format!(
+                let _ = ui_tx.send(UiCommand::SetStatus(StatusMsg::Notice(format!(
                     "Estas en la ultima version (v{})",
                     env!("CARGO_PKG_VERSION")
-                )));
+                ))));
             }
         }
         Err(e) => {
-            let _ = ui_tx.send(UiCommand::SetStatus(format!(
+            let _ = ui_tx.send(UiCommand::SetStatus(StatusMsg::Error(format!(
                 "Error: no se pudo revisar updates: {e}"
-            )));
+            ))));
         }
     }
 }

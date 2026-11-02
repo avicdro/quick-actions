@@ -22,7 +22,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::app_state::AppState;
-use crate::ui_protocol::UiCommand;
+use crate::ui_protocol::{StatusMsg, UiCommand};
 
 const WM_TRAYICON: u32 = WM_USER + 1;
 
@@ -118,7 +118,9 @@ fn handle_atajos_menu(state: &AppState, id: u32) {
         {
             tracing::warn!("No se pudo persistir [hotkeys] {}: {e}", cmd.config_field());
             let msg = format!("Error: ajuste '{}' no guardado", cmd.config_field());
-            let _ = state.ui_tx.send(UiCommand::SetStatus(msg));
+            let _ = state
+                .ui_tx
+                .send(UiCommand::SetStatus(StatusMsg::Error(msg)));
             state.repaint();
             return;
         }
@@ -140,7 +142,9 @@ fn handle_atajos_menu(state: &AppState, id: u32) {
         let on_count = changes.iter().filter(|(_, on)| *on).count();
         format!("Atajos: {on_count}/{} activados", changes.len())
     };
-    let _ = state.ui_tx.send(UiCommand::SetStatus(msg));
+    let _ = state
+        .ui_tx
+        .send(UiCommand::SetStatus(StatusMsg::Notice(msg)));
     state.repaint();
     tracing::info!("Menu atajos: {} cambio(s) aplicado(s).", changes.len());
 }

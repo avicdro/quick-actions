@@ -132,9 +132,9 @@ fn windows_main() {
             tracing::info!("Auto-update completado en el arranque previo: {tag}.");
             let _ = ui_channels
                 .tx
-                .send(quick_actions::ui_protocol::UiCommand::SetStatus(format!(
-                    "Actualizado a {tag} ✓"
-                )));
+                .send(quick_actions::ui_protocol::UiCommand::SetStatus(
+                    quick_actions::ui_protocol::StatusMsg::Notice(format!("Actualizado a {tag} ✓")),
+                ));
         }
     }
 

@@ -8,7 +8,9 @@ use crate::hotkeys::{CapsMode, HotkeyCommand, Modifier};
 
 // Protocolo de datos/comandos (cross-platform, movido a su propio modulo
 // para que la logica no dependa de egui — de camino a la fase 1 de refactor).
-pub use crate::ui_protocol::{HistoryData, HistoryEntryView, ResultData, UiChannels, UiCommand};
+pub use crate::ui_protocol::{
+    HistoryData, HistoryEntryView, ResultData, StatusMsg, ToastKind, UiChannels, UiCommand,
+};
 
 /// Pestanas de la ventana unificada.
 #[derive(Debug, Clone, PartialEq)]
@@ -63,6 +65,9 @@ pub struct QuickActionsApp {
     toast_was_visible: bool,
     /// Si el toast es de error (rojo) o loading (azul).
     toast_is_error: bool,
+    /// C6 (v0.5): clase del toast vigente (icono/expiry) — antes se
+    /// deducia de `classify_status(&status)` en cada frame (string matching).
+    toast_kind: ToastKind,
     /// Si los atajos estan pausados (P2).
     paused: bool,
     /// U1: momento en el que el toast se auto-oculta (None = hasta nuevo aviso).
@@ -114,6 +119,7 @@ impl QuickActionsApp {
             toast_visible: false,
             toast_was_visible: false,
             toast_is_error: false,
+            toast_kind: ToastKind::Notice,
             paused: false,
             toast_expiry: None,
             update_url: None,
@@ -156,31 +162,22 @@ impl QuickActionsApp {
                 }
                 UiCommand::SetStatus(msg) => {
                     // NO abrir la ventana principal. Solo actualizar el toast.
-                    if msg.is_empty() {
-                        self.toast_visible = false;
-                        self.toast_expiry = None;
-                    } else {
-                        self.toast_is_error = msg.starts_with("Error");
-                        self.toast_visible = true;
-                        // U1: clase deduce el auto-hide; Loading nunca expira.
-                        let kind = crate::ui_protocol::classify_status(&msg);
-                        self.toast_expiry = kind.expiry_secs().map(|secs| {
-                            std::time::Instant::now() + std::time::Duration::from_secs_f64(secs)
-                        });
+                    // C6: clase del mensaje TIPADA (nada de adivinar texto).
+                    match msg.kind() {
+                        None => {
+                            self.toast_visible = false;
+                            self.toast_expiry = None;
+                            self.status.clear();
+                        }
+                        Some(kind) => self.show_toast(msg.text().to_owned(), kind),
                     }
-                    self.status = msg;
                 }
                 UiCommand::SetPaused(v) => {
                     self.paused = v;
                     if v {
-                        self.status = "Pausado — atajos desactivados".to_string();
-                        self.toast_visible = true;
-                        // U1: ya no vive al infinito (Notice 3.5s).
-                        self.toast_expiry = Some(
-                            std::time::Instant::now()
-                                + std::time::Duration::from_secs_f64(
-                                    crate::ui_protocol::NOTICE_TOAST_SECS,
-                                ),
+                        self.show_toast(
+                            "Pausado — atajos desactivados".to_string(),
+                            ToastKind::Notice,
                         );
                     } else {
                         // Reanudar: limpiar status para que el proximo
@@ -221,6 +218,18 @@ impl QuickActionsApp {
                 }
             }
         }
+    }
+
+    /// C6 (v0.5): mostrar un toast de clase declarada (texto + kind van
+    /// juntos desde el sender; nada de deducir del texto).
+    fn show_toast(&mut self, text: String, kind: ToastKind) {
+        self.status = text;
+        self.toast_kind = kind;
+        self.toast_is_error = kind == ToastKind::Error;
+        self.toast_visible = true;
+        self.toast_expiry = kind
+            .expiry_secs()
+            .map(|secs| std::time::Instant::now() + std::time::Duration::from_secs_f64(secs));
     }
 
     /// Procesa hotkeys: recibe del canal y spawnea threads de trabajo.
@@ -276,17 +285,20 @@ impl QuickActionsApp {
                             .map(|c| c.app.repository)
                             .unwrap_or_default();
                         if repo.is_empty() {
-                            let _ = self.state.ui_tx.send(UiCommand::SetStatus(
+                            let _ = self.state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Error(
                                 "Error: sin repositorio configurado (Ajustes)".to_string(),
-                            ));
+                            )));
                             self.state.repaint();
                         } else {
                             let ui_tx = self.state.ui_tx.clone();
                             let repaint = self.state.repaint.clone();
                             let http = self.state.http.clone();
-                            let _ = self.state.ui_tx.send(UiCommand::SetStatus(
-                                "Descargando actualizacion...".to_string(),
-                            ));
+                            let _ =
+                                self.state
+                                    .ui_tx
+                                    .send(UiCommand::SetStatus(StatusMsg::Loading(
+                                        "Descargando actualizacion...".to_string(),
+                                    )));
                             self.state.repaint();
                             // Worker: el swap/reinicio hace todo el trabajo.
                             let tag2 = tag.clone();
@@ -802,14 +814,15 @@ impl QuickActionsApp {
                                 } else {
                                     "Auto-arranque desactivado"
                                 };
-                                let _ =
-                                    self.state.ui_tx.send(UiCommand::SetStatus(msg.to_string()));
-                            }
-                            Err(e) => {
                                 let _ = self
                                     .state
                                     .ui_tx
-                                    .send(UiCommand::SetStatus(format!("Error: {e}")));
+                                    .send(UiCommand::SetStatus(StatusMsg::Notice(msg.to_string())));
+                            }
+                            Err(e) => {
+                                let _ = self.state.ui_tx.send(UiCommand::SetStatus(
+                                    StatusMsg::Error(format!("Error: {e}")),
+                                ));
                             }
                         }
                         self.state.repaint();
@@ -881,9 +894,12 @@ impl QuickActionsApp {
                     // manda). Feedback garantizado por toast.
                     ui.add_space(8.0);
                     if ui.button("Buscar actualizaciones").clicked() {
-                        let _ = self.state.ui_tx.send(UiCommand::SetStatus(
-                            "Buscando actualizaciones...".to_string(),
-                        ));
+                        let _ = self
+                            .state
+                            .ui_tx
+                            .send(UiCommand::SetStatus(StatusMsg::Loading(
+                                "Buscando actualizaciones...".to_string(),
+                            )));
                         self.state.repaint();
                         let repo = cfg.app.repository.clone();
                         let ui_tx = self.state.ui_tx.clone();
@@ -1174,7 +1190,7 @@ impl eframe::App for QuickActionsApp {
             let is_error = self.toast_is_error;
             let paused = self.paused;
             // U1: clase del toast para elegir icono (spinner solo en loading).
-            let kind = crate::ui_protocol::classify_status(&status);
+            let kind = self.toast_kind;
 
             ctx.show_viewport_immediate(
                 toast_id,

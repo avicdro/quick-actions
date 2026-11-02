@@ -19,10 +19,14 @@ pub type RepaintFn = Arc<dyn Fn() + Send + Sync>;
 
 /// Clase de toast y su comportamiento de autodesaparicion (U1).
 ///
-/// El texto plano de `SetStatus` es el vehiculo, la clase deduce:
-/// - `Loading`: mensaje termina en `...` (spinner, NO expira)
-/// - `Error`: mensaje empieza con "Error" (expira en 6s)
-/// - `Notice`: cualquier otro aviso (expira en 3.5s)
+/// C6 (v0.5): la clase ya NO se adivina del texto (antes
+/// `classify_status` deducia de `starts_with("Error")`/`ends_with("...")`
+/// — cambiar un mensaje rompia spinner/expiry silenciosamente). Quien
+/// envia el `StatusMsg` declara la clase; `ToastKind` queda para el
+/// dibujo (icono) y el expiry.
+/// - `Loading`: spinner, NO expira
+/// - `Notice`: expira en 3.5s
+/// - `Error`: expira en 6s
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToastKind {
     /// Spinner mientras corre una peticion (sin expiry).
@@ -45,19 +49,40 @@ impl ToastKind {
     }
 }
 
-/// Clasifica un mensaje de status en `ToastKind`.
-///
-/// Reglas simples y deterministas sobre el texto plano (los senders nunca
-/// cambian su formato: los "Corrigiendo.../Traduciendo.../..." mantienen
-/// los tres puntos de seria loading).
-#[must_use]
-pub fn classify_status(msg: &str) -> ToastKind {
-    if msg.starts_with("Error") {
-        ToastKind::Error
-    } else if msg.trim_end().ends_with("...") {
-        ToastKind::Loading
-    } else {
-        ToastKind::Notice
+/// C6 (v0.5): mensaje de estado TIPADO — reemplaza al `SetStatus(String)`
+/// por texto plano con convenciones magicas ("..." para loading, prefijo
+/// "Error" para errores, "" para limpiar).
+#[derive(Debug, Clone, PartialEq)]
+pub enum StatusMsg {
+    /// Oculta el toast (estado limpio).
+    Clear,
+    /// Peticion en curso: spinner, sin expiry.
+    Loading(String),
+    /// Aviso transitorio: auto-oculta a los `NOTICE_TOAST_SECS`.
+    Notice(String),
+    /// Error: auto-oculta a los `ERROR_TOAST_SECS`.
+    Error(String),
+}
+
+impl StatusMsg {
+    /// Texto visible del mensaje ("" en `Clear`).
+    #[must_use]
+    pub fn text(&self) -> &str {
+        match self {
+            Self::Clear => "",
+            Self::Loading(t) | Self::Notice(t) | Self::Error(t) => t,
+        }
+    }
+
+    /// Clase de toast asociada (`None` en `Clear`).
+    #[must_use]
+    pub fn kind(&self) -> Option<ToastKind> {
+        match self {
+            Self::Clear => None,
+            Self::Loading(_) => Some(ToastKind::Loading),
+            Self::Notice(_) => Some(ToastKind::Notice),
+            Self::Error(_) => Some(ToastKind::Error),
+        }
     }
 }
 
@@ -66,24 +91,31 @@ mod toast_tests {
     use super::*;
 
     #[test]
-    fn classify_statuses() {
-        // Loading: suffix "..." (sin expiry)
-        assert_eq!(classify_status("Corrigiendo..."), ToastKind::Loading);
-        assert_eq!(classify_status("Traduciendo..."), ToastKind::Loading);
-        // Error: prefijo "Error" gana",
-        assert_eq!(classify_status("Error: x"), ToastKind::Error);
-        assert_eq!(classify_status("Error..."), ToastKind::Error);
-        // Notice: display de
-        assert_eq!(classify_status("Modelo cambiado"), ToastKind::Notice);
-        assert_eq!(classify_status("Auto-arranque activado"), ToastKind::Notice);
-        assert_eq!(classify_status(""), ToastKind::Notice);
-    }
-
-    #[test]
     fn expiry_durations() {
         assert_eq!(ToastKind::Loading.expiry_secs(), None);
         assert_eq!(ToastKind::Notice.expiry_secs(), Some(NOTICE_TOAST_SECS));
         assert_eq!(ToastKind::Error.expiry_secs(), Some(ERROR_TOAST_SECS));
+    }
+
+    #[test]
+    fn status_msg_texto_y_clase() {
+        // C6: la clase es del TIPO, ya no se adivina del texto — un
+        // "Error..." sigue siendo lo que su constructor declare.
+        assert_eq!(StatusMsg::Clear.text(), "");
+        assert_eq!(StatusMsg::Clear.kind(), None);
+        assert_eq!(
+            StatusMsg::Loading("Error...".into()).kind(),
+            Some(ToastKind::Loading)
+        );
+        assert_eq!(
+            StatusMsg::Error("Corrigiendo...".into()).kind(),
+            Some(ToastKind::Error)
+        );
+        assert_eq!(
+            StatusMsg::Notice("Modelo cambiado".into()).kind(),
+            Some(ToastKind::Notice)
+        );
+        assert_eq!(StatusMsg::Notice("x".into()).text(), "x");
     }
 }
 
@@ -129,8 +161,9 @@ pub enum UiCommand {
     ShowHistory(HistoryData),
     /// Mostrar ventana de ayuda.
     ShowHelp(String),
-    /// Actualizar el estado (loading/error). Cadena vacia = sin estado.
-    SetStatus(String),
+    /// Actualizar el estado (toast): C6 tipa el mensaje (clase declarada
+    /// por quien envia); `None` en kind = limpiar (`Clear`).
+    SetStatus(StatusMsg),
     /// Pausar/resumir los atajos (P2).
     SetPaused(bool),
     /// U4: abrir la ventana en la pestana Ajustes (menu del tray).

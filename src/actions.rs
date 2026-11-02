@@ -7,7 +7,7 @@ use crate::key_sim::KeySimulator;
 use crate::ollama::OllamaClient;
 use crate::prompts;
 use crate::text_utils;
-use crate::ui_protocol::{HistoryData, HistoryEntryView, ResultData, UiCommand};
+use crate::ui_protocol::{HistoryData, HistoryEntryView, ResultData, StatusMsg, UiCommand};
 
 /// Texto de ayuda mostrado con el hotkey de ayuda o click en tray.
 ///
@@ -63,9 +63,9 @@ pub fn handle_command(cmd: HotkeyCommand, state: &AppState) -> Result<()> {
             state.hook_modifier.name(),
             cmd.key_label()
         );
-        let _ = state
-            .ui_tx
-            .send(crate::ui_protocol::UiCommand::SetStatus(msg));
+        let _ = state.ui_tx.send(crate::ui_protocol::UiCommand::SetStatus(
+            crate::ui_protocol::StatusMsg::Notice(msg),
+        ));
         state.repaint();
         return Ok(());
     }
@@ -92,9 +92,9 @@ pub fn handle_command(cmd: HotkeyCommand, state: &AppState) -> Result<()> {
     // Si hubo error, mostrarlo sutilmente en la barra de estado
     if let Err(ref e) = result {
         let msg = format!("Error: {e}");
-        let _ = state
-            .ui_tx
-            .send(crate::ui_protocol::UiCommand::SetStatus(msg));
+        let _ = state.ui_tx.send(crate::ui_protocol::UiCommand::SetStatus(
+            crate::ui_protocol::StatusMsg::Error(msg),
+        ));
         state.repaint();
     }
 
@@ -102,14 +102,14 @@ pub fn handle_command(cmd: HotkeyCommand, state: &AppState) -> Result<()> {
 }
 
 fn handle_correct(state: &AppState, ollama: OllamaClient) -> Result<()> {
-    let _ = state
-        .ui_tx
-        .send(UiCommand::SetStatus("Corrigiendo...".to_string()));
+    let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Loading(
+        "Corrigiendo...".to_string(),
+    )));
     state.repaint();
 
     let texto = obtener_texto_para_corregir(state)?;
     if texto.is_empty() {
-        let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
+        let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Clear));
         return Ok(());
     }
 
@@ -122,7 +122,7 @@ fn handle_correct(state: &AppState, ollama: OllamaClient) -> Result<()> {
 
     if resultado.is_empty() {
         tracing::warn!("Ollama devolvio resultado vacio.");
-        let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
+        let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Clear));
         return Ok(());
     }
 
@@ -143,19 +143,19 @@ fn handle_correct(state: &AppState, ollama: OllamaClient) -> Result<()> {
     state.clipboard.set_text(&resultado)?;
     KeySimulator::paste(state.hook_modifier)?;
 
-    let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
+    let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Clear));
     Ok(())
 }
 
 fn handle_translate(state: &AppState, ollama: OllamaClient) -> Result<()> {
-    let _ = state
-        .ui_tx
-        .send(UiCommand::SetStatus("Traduciendo...".to_string()));
+    let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Loading(
+        "Traduciendo...".to_string(),
+    )));
     state.repaint();
 
     let texto = obtener_texto_para_corregir(state)?;
     if texto.is_empty() {
-        let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
+        let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Clear));
         return Ok(());
     }
 
@@ -167,7 +167,7 @@ fn handle_translate(state: &AppState, ollama: OllamaClient) -> Result<()> {
         crate::runtime::global().block_on(ollama.generate(&sys_prompt, &texto_limpio))?;
 
     if resultado.is_empty() {
-        let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
+        let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Clear));
         return Ok(());
     }
 
@@ -177,6 +177,10 @@ fn handle_translate(state: &AppState, ollama: OllamaClient) -> Result<()> {
         format!("Traduccion al {idioma}")
     };
 
+    // C6 colateral (bug): translate era el UNICO sin Clear antes de abrir
+    // la ventana — el spinner "Traduciendo..." quedaba visible para siempre
+    // junto al resultado (Loading no expira).
+    let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Clear));
     let _ = state.ui_tx.send(UiCommand::ShowResult(ResultData {
         titulo,
         original: texto_limpio,
@@ -188,14 +192,14 @@ fn handle_translate(state: &AppState, ollama: OllamaClient) -> Result<()> {
 }
 
 fn handle_summarize(state: &AppState, ollama: OllamaClient) -> Result<()> {
-    let _ = state
-        .ui_tx
-        .send(UiCommand::SetStatus("Resumiendo...".to_string()));
+    let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Loading(
+        "Resumiendo...".to_string(),
+    )));
     state.repaint();
 
     let texto = obtener_texto_para_corregir(state)?;
     if texto.is_empty() {
-        let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
+        let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Clear));
         return Ok(());
     }
 
@@ -207,11 +211,11 @@ fn handle_summarize(state: &AppState, ollama: OllamaClient) -> Result<()> {
         crate::runtime::global().block_on(ollama.generate(&sys_prompt, &texto_limpio))?;
 
     if resultado.is_empty() {
-        let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
+        let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Clear));
         return Ok(());
     }
 
-    let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
+    let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Clear));
     let _ = state.ui_tx.send(UiCommand::ShowResult(ResultData {
         titulo: "Resumen".to_string(),
         original: texto_limpio,
@@ -223,14 +227,14 @@ fn handle_summarize(state: &AppState, ollama: OllamaClient) -> Result<()> {
 }
 
 fn handle_generate(state: &AppState, ollama: OllamaClient) -> Result<()> {
-    let _ = state
-        .ui_tx
-        .send(UiCommand::SetStatus("Generando respuesta...".to_string()));
+    let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Loading(
+        "Generando respuesta...".to_string(),
+    )));
     state.repaint();
 
     let texto = obtener_texto_para_corregir(state)?;
     if texto.is_empty() {
-        let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
+        let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Clear));
         return Ok(());
     }
 
@@ -241,11 +245,11 @@ fn handle_generate(state: &AppState, ollama: OllamaClient) -> Result<()> {
     let resultado = crate::runtime::global().block_on(ollama.generate(&sys_prompt, &prompt))?;
 
     if resultado.is_empty() {
-        let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
+        let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Clear));
         return Ok(());
     }
 
-    let _ = state.ui_tx.send(UiCommand::SetStatus(String::new()));
+    let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Clear));
     let _ = state.ui_tx.send(UiCommand::ShowResult(ResultData {
         titulo: "Respuesta".to_string(),
         original: prompt,
