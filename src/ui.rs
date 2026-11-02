@@ -960,7 +960,16 @@ impl eframe::App for QuickActionsApp {
             self.window_open = false;
         }
 
-        ctx.set_pixels_per_point(1.3);
+        // C2: el zoom de la GUI ya no es un magic number (1.3 fijo que
+        // ignoraba el DPI del monitor): viene de [ui] scale (default 1.3,
+        // el look historico). Fallback si el lock falla o el valor es
+        // basura (negativo/0/NaN).
+        let cfg_scale = self.state.config.read().ok().map(|c| c.ui.scale);
+        let scale = match cfg_scale {
+            Some(s) if s.is_finite() && s > 0.1 => s,
+            _ => 1.3,
+        };
+        ctx.set_pixels_per_point(scale);
 
         // T1: tema — paleta por eleccion de config (dark/light/system);
         // re-aplicar SOLO si la paleta efectiva cambia (combo de Ajustes
@@ -1007,15 +1016,31 @@ impl eframe::App for QuickActionsApp {
                 // - Resizable
                 // - Centrada en pantalla
                 // - Con foco
+                // C1: tamano de la ventana desde [ui] (antes 900x700
+                // hardcodeados que ignoraban window_width/window_height).
+                // Clamped a los min inner size reales (con -1 de margen para
+                // que el request del egui nunca quede por debajo del min).
+                let (ww, wh) = self
+                    .state
+                    .config
+                    .read()
+                    .ok()
+                    .map(|c| (c.ui.window_width as f32, c.ui.window_height as f32))
+                    .unwrap_or((900.0, 700.0));
+                let ww = ww.clamp(480.0, 4000.0);
+                let wh = wh.clamp(420.0, 4000.0);
                 ctx.send_viewport_cmd(egui::ViewportCommand::Title("Quick Actions".to_string()));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(true));
                 self.boot_tool_done = set_toolwindow(false); // V4-fix: ventana normal
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(900.0, 700.0)));
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(ww, wh)));
                 let monitor = ctx
                     .input(|i| i.viewport().monitor_size)
                     .unwrap_or(egui::vec2(1920.0, 1080.0));
-                let pos = egui::pos2((monitor.x - 900.0) / 2.0, (monitor.y - 700.0) / 2.0);
+                let pos = egui::pos2(
+                    ((monitor.x - ww) / 2.0).max(0.0),
+                    ((monitor.y - wh) / 2.0).max(0.0),
+                );
                 ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);

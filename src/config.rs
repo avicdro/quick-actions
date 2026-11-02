@@ -78,11 +78,19 @@ impl ThemeChoice {
 }
 
 /// Configuracion visual de las ventanas.
+///
+/// C1 (v0.5): `font_size` ELIMINADO — era una abstraccion muerta (nadie la
+/// leia y escalar los text styles a mano dejaba fuera los RichText::size()
+/// hardcoded). El zoom uniforme correcto en egui es `pixels_per_point`, asi
+/// que entra `scale` (default 1.3 = el look historico): escala TODA la GUI
+/// (fuentes + widgets) por igual y de paso deja de ignorar el DPI del
+/// monitor (C2: quien quiera nativo pone 1.0).
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct UiConfig {
-    /// Tamano de fuente (px aproximado para egui).
-    pub font_size: u32,
+    /// Zoom de la GUI completa (pixels_per_point de egui). 1.0 = nativo del
+    /// monitor; default 1.3 = look del proyecto.
+    pub scale: f32,
     /// Ancho por defecto de ventanas de resultado.
     pub window_width: u32,
     /// Alto por defecto de ventanas de resultado.
@@ -96,7 +104,7 @@ pub struct UiConfig {
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
-            font_size: 16,
+            scale: 1.3,
             window_width: 800,
             window_height: 600,
             history_max_entries: 50,
@@ -249,9 +257,9 @@ endpoint = "http://localhost:11434/api/generate"
 timeout_seconds = 60
 
 [ui]
-font_size = 16
-window_width = 800
-window_height = 600
+scale = 1.3             # zoom de TODA la GUI (1.0 = nativo del monitor, 1.3 = default)
+window_width = 800      # ancho de la ventana de resultado al abrir
+window_height = 600     # alto de la ventana de resultado al abrir
 history_max_entries = 50
 theme = "dark"          # "dark" (default), "light" o "system" (sigue Windows)
 
@@ -382,7 +390,8 @@ mod tests {
     fn config_default_values() {
         let c = Config::default();
         assert_eq!(c.ollama.model, "gemma4:cloud");
-        assert_eq!(c.ui.font_size, 16);
+        // C1: font_size eliminado; scale = zoom de la GUI (look historico 1.3)
+        assert!((c.ui.scale - 1.3).abs() < f32::EPSILON);
         assert!(c.hotkeys.enabled);
         // P7 + U2 (default del usuario: Alt)
         assert_eq!(c.hotkeys.modifier, "alt");
@@ -402,7 +411,7 @@ endpoint = "http://localhost:11434/api/generate"
 timeout_seconds = 120
 
 [ui]
-font_size = 20
+scale = 1.5
 window_width = 1024
 window_height = 768
 history_max_entries = 100
@@ -419,7 +428,8 @@ enabled = true
         let c: Config = toml::from_str(toml).unwrap();
         assert_eq!(c.ollama.model, "qwen3");
         assert_eq!(c.ollama.timeout_seconds, 120);
-        assert_eq!(c.ui.font_size, 20);
+        assert!((c.ui.scale - 1.5).abs() < f32::EPSILON);
+        assert_eq!(c.ui.window_width, 1024);
         assert!(!c.hotkeys.enabled);
         assert!(c.launcher.enabled);
         assert!(c.notifications.enabled);
@@ -436,7 +446,7 @@ model = "test-model"
         assert_eq!(c.ollama.model, "test-model");
         // Defaults del resto
         assert_eq!(c.ollama.endpoint, "http://localhost:11434/api/generate");
-        assert_eq!(c.ui.font_size, 16);
+        assert!((c.ui.scale - 1.3).abs() < f32::EPSILON);
         assert!(c.hotkeys.enabled);
     }
 

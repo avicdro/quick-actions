@@ -68,8 +68,8 @@ endpoint = "http://localhost:11434/api/generate" # Endpoint de Ollama
 timeout_seconds = 60
 
 [ui]
-font_size = 16
-window_width = 800
+scale = 1.3              # zoom de TODA la GUI (1.0 = nativo del monitor)
+window_width = 800       # ancho/alto de la ventana de resultado al abrir
 window_height = 600
 history_max_entries = 50
 theme = "dark"           # "dark" (default), "light" o "system" (sigue Windows)
