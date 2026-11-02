@@ -1035,7 +1035,7 @@ impl eframe::App for QuickActionsApp {
         // localizable y el intento no-op deja el boton de taskbar.
         // (Con --show el open-block de abajo lo desactiva en el mismo frame.)
         if !self.window_open && !self.boot_tool_done {
-            self.boot_tool_done = set_toolwindow(true);
+            self.boot_tool_done = set_toolwindow(&self.state, true);
         }
 
         // Inicializar clipboard cacheado si aun no existe.
@@ -1078,7 +1078,7 @@ impl eframe::App for QuickActionsApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Title("Quick Actions".to_string()));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(true));
-                self.boot_tool_done = set_toolwindow(false); // V4-fix: ventana normal
+                self.boot_tool_done = set_toolwindow(&self.state, false); // V4-fix: ventana normal
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(ww, wh)));
                 let monitor = ctx
                     .input(|i| i.viewport().monitor_size)
@@ -1093,7 +1093,7 @@ impl eframe::App for QuickActionsApp {
                 // V6: subirla por encima de todo (juego fullscreen, apps)
                 // — egui Focus solo puede fallar con foreground-lock y la
                 // ventana quedaba detras, "invisible" para el usuario.
-                present_main_window();
+                present_main_window(&self.state);
             } else {
                 // V4-fix: NO usar ViewportCommand::Visible(false) — bug egui
                 // (emilk/egui#5229, #3655): una viewport que se pasa a
@@ -1108,7 +1108,7 @@ impl eframe::App for QuickActionsApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
                     -10000.0, -10000.0,
                 )));
-                set_toolwindow(true);
+                set_toolwindow(&self.state, true);
             }
             self.was_visible = self.window_open;
         }
@@ -1554,30 +1554,47 @@ extern "system" fn enum_quick_hwnd(hwnd: windows::Win32::Foundation::HWND, out: 
 }
 
 #[cfg(windows)]
-fn main_hwnd() -> Option<HWND> {
+fn main_hwnd(state: &AppState) -> Option<HWND> {
     use windows::Win32::UI::WindowsAndMessaging::{
         EnumWindows, FindWindowW, GetWindowThreadProcessId,
     };
 
-    unsafe {
+    // C7: fast-path — ya localizada alguna vez: la devolvemos de la cache
+    // sin FindWindowW ni EnumWindows (el boot reintenta por frame y cada
+    // repintada del toast/menu volvía a escanear ventanas).
+    if let Some(&addr) = state.main_hwnd.get() {
+        return Some(HWND(addr as *mut core::ffi::c_void));
+    }
+
+    let found = unsafe {
         // Fast path: ya abrio la ventana alguna vez (titulo con espacio).
         if let Ok(hwnd) = FindWindowW(None, windows::core::w!("Quick Actions")) {
             let mut pid = 0u32;
             GetWindowThreadProcessId(hwnd, Some(&mut pid));
             if pid == std::process::id() {
-                return Some(hwnd);
+                Some(hwnd)
+            } else {
+                None
+            }
+        } else {
+            // Fallback: EnumWindows de este proceso (titulo "QuickActions"
+            // al arrancar). Solo si nunca se ha abierto con titulo nuevo.
+            let mut result = HWND(std::ptr::null_mut());
+            let sptr = &mut result as *mut HWND as isize;
+            if EnumWindows(Some(enum_quick_hwnd), LPARAM(sptr)).is_ok() && !result.0.is_null() {
+                Some(result)
+            } else {
+                None
             }
         }
+    };
 
-        // Fallback: EnumWindows de este proceso (titulo "QuickActions" al
-        // arrancar). Solo si nunca se ha abierto con titulo nuevo.
-        let mut result = HWND(std::ptr::null_mut());
-        let sptr = &mut result as *mut HWND as isize;
-        if EnumWindows(Some(enum_quick_hwnd), LPARAM(sptr)).is_ok() && !result.0.is_null() {
-            return Some(result);
-        }
-        None
+    // Cacheamos al primer hit (OnceLock: el set posterior es no-op si un
+    // thread llego antes). La direccion cruda vive en AppState (C7).
+    if let Some(hwnd) = found {
+        let _ = state.main_hwnd.set(hwnd.0 as isize);
     }
+    found
 }
 
 /// V4-fix/V6: alterna WS_EX_TOOLWINDOW en la ventana principal.
@@ -1591,14 +1608,14 @@ fn main_hwnd() -> Option<HWND> {
 /// primer frame, de modo que en el frame 1 el EnumWindows-match no hay
 /// nada que buscar — el llamador reintenta por frame mientras sea false.
 #[cfg(windows)]
-fn set_toolwindow(tool: bool) -> bool {
+fn set_toolwindow(state: &AppState, tool: bool) -> bool {
     use windows::Win32::UI::WindowsAndMessaging::{
         GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE,
         SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
         SW_SHOWNOACTIVATE, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
     };
 
-    let Some(hwnd) = main_hwnd() else {
+    let Some(hwnd) = main_hwnd(state) else {
         return false;
     };
 
@@ -1670,14 +1687,14 @@ fn set_toolwindow(tool: bool) -> bool {
 /// SetForegroundWindow best-effort le roba el foco cuando Windows lo
 /// permite (o simplemente queda visible y clickeable).
 #[cfg(windows)]
-fn present_main_window() {
+fn present_main_window(state: &AppState) {
     use windows::Win32::UI::WindowsAndMessaging::{
         BringWindowToTop, SetForegroundWindow, SetWindowPos, ShowWindow, HWND_NOTOPMOST,
         HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_RESTORE,
         SW_SHOWNOACTIVATE,
     };
 
-    let Some(hwnd) = main_hwnd() else { return };
+    let Some(hwnd) = main_hwnd(state) else { return };
 
     unsafe {
         // Restaurar si acaso estaba minimizada; si no, no-op seguro.
@@ -1713,10 +1730,10 @@ fn present_main_window() {
 }
 
 #[cfg(not(windows))]
-fn present_main_window() {}
+fn present_main_window(state: &AppState) {}
 
 #[cfg(not(windows))]
-fn set_toolwindow(_tool: bool) -> bool {
+fn set_toolwindow(_state: &AppState, _tool: bool) -> bool {
     false
 }
 

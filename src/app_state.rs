@@ -47,6 +47,13 @@ pub struct AppState {
     /// egui::Context real, cableado en el primer frame del UI (via
     /// [`AppState::set_ui_ctx`]); hasta entonces la repintada es no-op.
     pub ui_ctx: Arc<OnceLock<egui::Context>>,
+    /// C7 (v0.5): HWND de la ventana principal, cacheado como direccion
+    /// cruda (`isize`) la PRIMERA vez que se localiza. De ahi en mas
+    /// `set_toolwindow`/`present_main_window` ya no buscan por titulo en
+    /// cada llamada (FindWindowW/EnumWindows por-frame en el boot).
+    /// Cache invalidation no aplica: egui no recrea el root en esta app
+    /// (la ventana vive todo el proceso).
+    pub main_hwnd: OnceLock<isize>,
     /// Despierta el event loop del UI (reemplaza `CONTEXT` static).
     pub repaint: RepaintFn,
     /// Modificador APLICADO en el hook (capturado al arrancar; cambiarlo
@@ -93,6 +100,7 @@ impl AppState {
             models_fetching: Arc::new(AtomicBool::new(false)),
             ui_tx,
             ui_ctx,
+            main_hwnd: OnceLock::new(),
             repaint,
             hook_modifier,
             hook_capsmode,

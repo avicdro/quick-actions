@@ -112,6 +112,12 @@ fn try_acquire() -> Result<bool, windows::core::Error> {
 ///
 /// Secuencia identica a `present_main_window()` (V6): restore si iconica,
 /// poke TOPMOST→NOTOPMOST y SetForegroundWindow best-effort.
+///
+/// C7 (v0.5): NO usa la cache `AppState::main_hwnd` — esta funcion mira
+/// la ventana de OTRO proceso (la 2a instancia busca la primera); la
+/// cache es por-proceso. Aqui FindWindowW por titulo es inherentemente
+/// lo correcto (la colision de titulo con otra app es el unico riesgo,
+/// y las validaciones de visibilidad/exstyle lo acotan).
 fn focus_existing_gui() -> bool {
     use windows::Win32::UI::WindowsAndMessaging::{
         BringWindowToTop, FindWindowW, GetWindowLongPtrW, IsIconic, IsWindowVisible,
