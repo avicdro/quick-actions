@@ -12,6 +12,10 @@
 //!
 //! Si algo falla tras el primer rename, hace rollback del swap para no
 //! dejar el instal roto.
+//!
+//! C5 (v0.5): FAIL-CLOSED — sin `SHA256SUMS.txt` en la release no se
+//! aplica nada (antes se continuaba sin verificar: riesgo de supply
+//! chain). Releases <= v0.2.3 requieren instalacion manual.
 
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -113,8 +117,23 @@ pub fn apply_update(
             tracing::info!("Auto-update: SHA-256 verificado ({got}).");
         }
         Err(e) => {
-            // Sin sums disponible (release vieja): aviso, no bloqueo el flow.
-            tracing::debug!("SHA256SUMS no disponible ({e}); sigo sin verificar hash.");
+            // C5 (v0.5): FAIL-CLOSED — sin sums no se ejecuta un exe
+            // descargado (supply chain: en una release vieja sin
+            // SHA256SUMS el updater aplicaba el binario sin verificar
+            // NADA). El trade-off: releases <= v0.2.3 no auto-actualizan;
+            // el usuario descarga manual desde Releases (verificado a ojo
+            // del hash si quiere).
+            let _ = std::fs::remove_file(&sums_tmp);
+            let _ = std::fs::remove_file(&update_file);
+            tracing::warn!("Auto-update: SHA256SUMS no disponible ({e}); aborto (fail-closed).");
+            toast(
+                &ui_tx,
+                &repaint,
+                "Error: sin SHA256SUMS en la release no verifico el binario; \
+                 descarga manual desde GitHub Releases"
+                    .to_string(),
+            );
+            return;
         }
     }
     let _ = std::fs::remove_file(&sums_tmp);
