@@ -179,12 +179,19 @@ fn windows_main() {
         .map(|c| c.hotkeys.clone())
         .unwrap_or_default();
 
+    // C3 (v0.5): el UNICO cliente HTTP de la app — pooling de conexiones
+    // conservado entre acciones (antes: reqwest::Client nuevo por hotkey).
+    let http = reqwest::Client::builder()
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
     let state = Arc::new(AppState::new(
         Arc::clone(&config),
         config_path.clone(),
         Arc::clone(&suspended),
         Arc::clone(&clipboard),
         Arc::clone(&history),
+        Arc::new(http),
         // Cache de modelos para el submenu del tray y Ajustes (P3); se
         // llena en background justo despues (spawn_models_refresh).
         Arc::new(std::sync::RwLock::new(Vec::<String>::new())),
@@ -202,7 +209,11 @@ fn windows_main() {
 
     // === 5.5. Check de updates (background, no bloquea) — P4 ===
     if let Some(app_config) = state.config_snapshot().map(|c| c.app) {
-        quick_actions::update_check::spawn_check(&app_config, ui_channels.tx.clone());
+        quick_actions::update_check::spawn_check(
+            &app_config,
+            std::sync::Arc::clone(&state.http),
+            ui_channels.tx.clone(),
+        );
     }
 
     // === 6. Iniciar hook de teclado (thread dedicado) — fase 1.3: todo

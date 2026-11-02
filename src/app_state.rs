@@ -32,6 +32,12 @@ pub struct AppState {
     pub clipboard: Arc<ClipboardManager>,
     /// Historia compartida.
     pub history: Arc<Mutex<History>>,
+    /// C3 (v0.5): cliente HTTP UNICO para toda la app (pooling de
+    /// conexiones + cache TLS). El timeout va por request: cada caller
+    /// usa el suyo (generate = config, /api/tags = 3s, GitHub = 5s,
+    /// updater = 120s). Antes cada accion creaba un `reqwest::Client`
+    /// nuevo y tiraba el pool.
+    pub http: Arc<reqwest::Client>,
     /// Cache de modelos Ollama para el submenu del tray y Ajustes (P3).
     pub ollama_models: Arc<RwLock<Vec<String>>>,
     /// Guardia anti-refetch-duplicado (`true` = refetch en curso).
@@ -61,6 +67,7 @@ impl AppState {
         suspendido: Arc<AtomicBool>,
         clipboard: Arc<ClipboardManager>,
         history: Arc<Mutex<History>>,
+        http: Arc<reqwest::Client>,
         ollama_models: Arc<RwLock<Vec<String>>>,
         ui_tx: Sender<UiCommand>,
         hook_modifier: crate::hotkeys::Modifier,
@@ -81,6 +88,7 @@ impl AppState {
             suspendido,
             clipboard,
             history,
+            http,
             ollama_models,
             models_fetching: Arc::new(AtomicBool::new(false)),
             ui_tx,
@@ -126,10 +134,12 @@ impl AppState {
         };
         let cache = Arc::clone(&self.ollama_models);
         let fetching = Arc::clone(&self.models_fetching);
+        let http = Arc::clone(&self.http);
 
         std::thread::spawn(move || {
-            let models = crate::runtime::global()
-                .block_on(crate::ollama::OllamaClient::list_models(&ollama_config));
+            let models = crate::runtime::global().block_on(
+                crate::ollama::OllamaClient::list_models(&ollama_config, &http),
+            );
             match models {
                 Ok(list) => {
                     *cache.write().unwrap_or_else(|e| e.into_inner()) = list;

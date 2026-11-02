@@ -6,14 +6,17 @@
 //! No instala nada: solo avisa.
 
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 
 use serde::Deserialize;
 
 use crate::config::AppConfig;
 use crate::ui_protocol::UiCommand;
 
-/// Timeout de la consulta (no colgamos el arranque ni el thread).
+/// Timeout de la consulta (por-request sobre el cliente compartido; no
+/// colgamos el arranque ni el thread).
 const HTTP_TIMEOUT_SECS: u64 = 5;
+const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(HTTP_TIMEOUT_SECS);
 
 /// Respuesta minima de `/releases/latest`.
 #[derive(Debug, Clone, Deserialize)]
@@ -36,7 +39,7 @@ pub struct LatestRelease {
 /// manual vive en `run_manual_check` (boton de Ajustes).
 ///
 /// No-op si esta desactivado (`check_updates = false`) o sin repo configurado.
-pub fn spawn_check(app_config: &AppConfig, ui_tx: Sender<UiCommand>) {
+pub fn spawn_check(app_config: &AppConfig, http: Arc<reqwest::Client>, ui_tx: Sender<UiCommand>) {
     if !app_config.check_updates || app_config.repository.is_empty() {
         return;
     }
@@ -44,13 +47,13 @@ pub fn spawn_check(app_config: &AppConfig, ui_tx: Sender<UiCommand>) {
     let repo = app_config.repository.clone();
     let ui_tx2 = ui_tx.clone();
 
-    std::thread::spawn(move || quiet_check(&repo, &ui_tx2));
+    std::thread::spawn(move || quiet_check(&repo, &http, &ui_tx2));
 }
 
 /// Check silencioso (arranque): avisa UNICAMENTE si hay version nueva.
-fn quiet_check(repo: &str, ui_tx: &Sender<UiCommand>) {
+fn quiet_check(repo: &str, http: &Arc<reqwest::Client>, ui_tx: &Sender<UiCommand>) {
     let runtime = crate::runtime::global();
-    match runtime.block_on(fetch_latest(repo)) {
+    match runtime.block_on(fetch_latest(repo, http)) {
         Ok(release) => {
             if is_newer_tag(&release.tag, env!("CARGO_PKG_VERSION")) {
                 tracing::info!(
@@ -87,9 +90,9 @@ fn quiet_check(repo: &str, ui_tx: &Sender<UiCommand>) {
 ///
 /// Corre en un thread de fondo: el llamador (UI) dispara el toast de
 /// "Buscando..." antes de invocar esto.
-pub fn run_manual_check(repo: &str, ui_tx: Sender<UiCommand>) {
+pub fn run_manual_check(repo: &str, http: Arc<reqwest::Client>, ui_tx: Sender<UiCommand>) {
     let runtime = crate::runtime::global();
-    match runtime.block_on(fetch_latest(repo)) {
+    match runtime.block_on(fetch_latest(repo, &http)) {
         Ok(release) => {
             if is_newer_tag(&release.tag, env!("CARGO_PKG_VERSION")) {
                 tracing::info!(
@@ -122,17 +125,13 @@ pub fn run_manual_check(repo: &str, ui_tx: Sender<UiCommand>) {
 /// # Errors
 ///
 /// Error de red/HTTP o de parseo; el caller lo trata como no-critico.
-pub async fn fetch_latest(repo: &str) -> Result<LatestRelease, String> {
+pub async fn fetch_latest(repo: &str, http: &reqwest::Client) -> Result<LatestRelease, String> {
     let url = format!("https://api.github.com/repos/{repo}/releases/latest");
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(HTTP_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| format!("Client reqwest: {e}"))?;
-
     // GitHub API exige User-Agent; reqwest no lo envia por defecto.
-    let response = client
+    let response = http
         .get(&url)
+        .timeout(HTTP_TIMEOUT)
         .header(
             "User-Agent",
             format!("quick-actions/{}", env!("CARGO_PKG_VERSION")),

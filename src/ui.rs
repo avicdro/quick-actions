@@ -273,6 +273,7 @@ impl QuickActionsApp {
                         } else {
                             let ui_tx = self.state.ui_tx.clone();
                             let repaint = self.state.repaint.clone();
+                            let http = self.state.http.clone();
                             let _ = self.state.ui_tx.send(UiCommand::SetStatus(
                                 "Descargando actualizacion...".to_string(),
                             ));
@@ -280,7 +281,9 @@ impl QuickActionsApp {
                             // Worker: el swap/reinicio hace todo el trabajo.
                             let tag2 = tag.clone();
                             std::thread::spawn(move || {
-                                crate::self_update::apply_update(&repo, &tag2, ui_tx, repaint);
+                                crate::self_update::apply_update(
+                                    &repo, &tag2, http, ui_tx, repaint,
+                                );
                             });
                         }
                     }
@@ -874,10 +877,11 @@ impl QuickActionsApp {
                         self.state.repaint();
                         let repo = cfg.app.repository.clone();
                         let ui_tx = self.state.ui_tx.clone();
+                        let http = self.state.http.clone();
                         // Check manual en background con feedback SIEMPRE
                         // (aviso / ultima version / error) — no bloquea UI.
                         std::thread::spawn(move || {
-                            crate::update_check::run_manual_check(&repo, ui_tx);
+                            crate::update_check::run_manual_check(&repo, http, ui_tx);
                         });
                     }
                     if cfg.app.repository.is_empty() {

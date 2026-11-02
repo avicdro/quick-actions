@@ -16,11 +16,13 @@
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 
 use crate::ui_protocol::{RepaintFn, UiCommand};
 
-/// Timeout de descargas del updater (el exe es ~7MB: bien holgado).
-const DL_TIMEOUT_SECS: u64 = 120;
+/// Timeout de descarga del updater — POR-REQUEST sobre el cliente
+/// compartido (`AppState::http`); el exe es ~7MB: bien holgado.
+const DL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 const EXE_ASSET: &str = "quick-actions.exe";
 const SUMS_ASSET: &str = "SHA256SUMS.txt";
@@ -34,7 +36,13 @@ fn toast(ui_tx: &Sender<UiCommand>, repaint: &RepaintFn, msg: String) {
 ///
 /// Bloquea el thread llamador (spawn en la UI antes de invocar). Todos los
 /// pasos informan por toast; un fallo deja la instalacion intacta.
-pub fn apply_update(repo: &str, tag: &str, ui_tx: Sender<UiCommand>, repaint: RepaintFn) {
+pub fn apply_update(
+    repo: &str,
+    tag: &str,
+    http: Arc<reqwest::Client>,
+    ui_tx: Sender<UiCommand>,
+    repaint: RepaintFn,
+) {
     let Some(exe) = std::env::current_exe().ok() else {
         toast(
             &ui_tx,
@@ -55,7 +63,7 @@ pub fn apply_update(repo: &str, tag: &str, ui_tx: Sender<UiCommand>, repaint: Re
     // === 1. Descarga del exe de la release ===
     toast(&ui_tx, &repaint, format!("Descargando {tag}..."));
     let exe_url = format!("https://github.com/{repo}/releases/download/{tag}/{EXE_ASSET}");
-    if let Err(e) = download(&exe_url, &update_file) {
+    if let Err(e) = download(&exe_url, &update_file, &http) {
         let _ = std::fs::remove_file(&update_file);
         toast(&ui_tx, &repaint, format!("Error: descarga falló: {e}"));
         return;
@@ -65,7 +73,7 @@ pub fn apply_update(repo: &str, tag: &str, ui_tx: Sender<UiCommand>, repaint: Re
     // sigue igual pero lo anota — release viejas no tenian sums) ===
     let sums_url = format!("https://github.com/{repo}/releases/download/{tag}/{SUMS_ASSET}");
     let sums_tmp = dir.join("SHA256SUMS.tmp");
-    match download(&sums_url, &sums_tmp) {
+    match download(&sums_url, &sums_tmp, &http) {
         Ok(()) => {
             let expected = std::fs::read_to_string(&sums_tmp)
                 .ok()
@@ -158,16 +166,14 @@ pub fn apply_update(repo: &str, tag: &str, ui_tx: Sender<UiCommand>, repaint: Re
 }
 
 /// Descarga `url` a `dest` (stream, sin cargar el binario entero en RAM).
-fn download(url: &str, dest: &Path) -> Result<(), String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(DL_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| format!("client: {e}"))?;
-
+///
+/// C3: usa el cliente compartido — timeout POR-REQUEST.
+fn download(url: &str, dest: &Path, client: &reqwest::Client) -> Result<(), String> {
     let runtime = crate::runtime::global();
     runtime.block_on(async {
         let response = client
             .get(url)
+            .timeout(DL_TIMEOUT)
             .header(
                 "User-Agent",
                 format!("quick-actions/{}", env!("CARGO_PKG_VERSION")),

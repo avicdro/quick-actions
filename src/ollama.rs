@@ -5,6 +5,11 @@ use crate::config::OllamaConfig;
 use crate::error::{AppError, Result};
 
 /// Cliente para comunicarse con la API de Ollama.
+///
+/// C3 (v0.5): el `reqwest::Client` NO nace aqui — se inyecta (el unico
+/// compartido, `AppState::http`) para conservar el pooling de conexiones
+/// entre acciones. El timeout es POR REQUEST (`RequestBuilder::timeout`
+/// en `generate`), porque la config puede cambiar en caliente.
 pub struct OllamaClient {
     config: OllamaConfig,
     client: reqwest::Client,
@@ -37,13 +42,8 @@ struct OllamaResponse {
 }
 
 impl OllamaClient {
-    /// Crea un nuevo cliente configurado.
-    pub fn new(config: OllamaConfig) -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(config.timeout_seconds))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
-
+    /// Crea un nuevo cliente Ollama sobre el cliente HTTP compartido.
+    pub fn new(config: OllamaConfig, client: reqwest::Client) -> Self {
         Self { config, client }
     }
 
@@ -68,6 +68,7 @@ impl OllamaClient {
 
         let response = self.client
             .post(&self.config.endpoint)
+            .timeout(std::time::Duration::from_secs(self.config.timeout_seconds))
             .json(&body)
             .send()
             .await
@@ -99,30 +100,36 @@ impl OllamaClient {
 
     /// Lista los modelos instalados en Ollama (`GET /api/tags`).
     ///
+    /// Reusa el cliente HTTP compartido (pooling); el timeout de 3s es
+    /// por-request para no bloquear el refetch si Ollama esta colgado.
+    ///
     /// Devuelve los nombres tal cual los reporta Ollama (con tag, ej.
     /// `gemma4:cloud`). Vacio si la API responde sin modelos.
     ///
     /// # Errors
     ///
     /// Si no se puede conectar (Ollama caido) o el HTTP falla.
-    pub async fn list_models(config: &OllamaConfig) -> Result<Vec<String>> {
+    pub async fn list_models(
+        config: &OllamaConfig,
+        client: &reqwest::Client,
+    ) -> Result<Vec<String>> {
         let url = format!("{}/api/tags", endpoint_base(&config.endpoint));
 
-        let client = reqwest::Client::builder()
+        let response = client
+            .get(&url)
             .timeout(std::time::Duration::from_secs(3))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
-
-        let response = client.get(&url).send().await.map_err(|e| {
-            if e.is_connect() {
-                AppError::Ollama(
-                    "Ollama no responde (ollama serve caido?). No se puede listar modelos."
-                        .to_string(),
-                )
-            } else {
-                AppError::Ollama(format!("Error listando modelos: {e}"))
-            }
-        })?;
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_connect() {
+                    AppError::Ollama(
+                        "Ollama no responde (ollama serve caido?). No se puede listar modelos."
+                            .to_string(),
+                    )
+                } else {
+                    AppError::Ollama(format!("Error listando modelos: {e}"))
+                }
+            })?;
 
         if !response.status().is_success() {
             let status = response.status();

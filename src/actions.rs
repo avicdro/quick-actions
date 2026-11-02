@@ -70,7 +70,7 @@ pub fn handle_command(cmd: HotkeyCommand, state: &AppState) -> Result<()> {
         return Ok(());
     }
 
-    let ollama = OllamaClient::new(config.ollama.clone());
+    let ollama = OllamaClient::new(config.ollama.clone(), (*state.http).clone());
     let result = match cmd {
         HotkeyCommand::Correct => handle_correct(state, ollama),
         HotkeyCommand::Translate => handle_translate(state, ollama),
