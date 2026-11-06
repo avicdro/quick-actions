@@ -15,6 +15,8 @@ pub struct Config {
     pub hotkeys: HotkeysConfig,
     /// Configuracion de la app en general (auto-arranque, etc).
     pub app: AppConfig,
+    /// Prompts de IA personalizados (Bloque P, v0.6).
+    pub prompts: PromptsConfig,
     /// Configuracion futura del launcher.
     pub launcher: LauncherConfig,
     /// Configuracion futura de notificaciones.
@@ -163,6 +165,29 @@ impl Default for HotkeysConfig {
     }
 }
 
+/// Configuracion de prompts de IA personalizados (Bloque P, v0.6).
+///
+/// Cada accion (corregir/traducir/resumir/generar) puede pisa su prompt
+/// por defecto con un `.md` en la carpeta `dir`: prompts/corregir.md,
+/// prompts/traducir.md, prompts/resumir.md, prompts/generar.md.
+/// Archivo ausente o vacio = default compilado (ver `crate::prompts`).
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
+pub struct PromptsConfig {
+    /// Carpeta de prompts personalizados. Relativa al config.toml por
+    /// defecto; ruta absoluta o con `~` para apuntar fuera (ej. un repo
+    /// privado de dotfiles). Cadena vacia = SOLO defaults (override off).
+    pub dir: String,
+}
+
+impl Default for PromptsConfig {
+    fn default() -> Self {
+        Self {
+            dir: "prompts".to_string(),
+        }
+    }
+}
+
 /// Configuracion general de la app.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
@@ -282,6 +307,18 @@ autostart = false
 check_updates = true
 repository = "avicdro/quick-actions"
 
+[prompts]
+# Prompts de IA personalizados: un .md por accion SI pisas el default.
+#   prompts/corregir.md, prompts/traducir.md
+#   prompts/resumir.md,   prompts/generar.md
+# Archivo ausente o vacio = prompt por defecto de la app.
+# El {contexto} en corregir.md/generar.md se sustituye por el texto
+# detectado; {idioma} en traducir.md; {formato} en resumir.md.
+# Se leen en cada atajo: editar el .md NO requiere reiniciar.
+# Ruta relativa a config.toml (default). Absoluta o con ~ = externa
+# (ej. "dir = \"~/quick-actions-prompts\""); "" = solo defaults.
+dir = "prompts"
+
 [launcher]
 enabled = false
 
@@ -396,6 +433,8 @@ mod tests {
         // P7 + U2 (default del usuario: Alt)
         assert_eq!(c.hotkeys.modifier, "alt");
         assert_eq!(c.hotkeys.capsmode, "hold");
+        // Bloque P (v0.6)
+        assert_eq!(c.prompts.dir, "prompts");
         // P1/P4
         assert!(!c.app.autostart);
         assert!(c.app.check_updates);
@@ -496,6 +535,21 @@ autostart = true
 "#;
         let c: Config = toml::from_str(toml).unwrap();
         assert!(c.app.autostart);
+    }
+
+    #[test]
+    fn prompts_dir_custom_and_empty_desactiva_override() {
+        // Bloque P: dir custom (ruta externa a dotfiles privados).
+        let c: Config = toml::from_str("[prompts]\ndir = \"~/qa-prompts\"\n").unwrap();
+        assert_eq!(c.prompts.dir, "~/qa-prompts");
+
+        // dir vacio = override desactivado (solo defaults compilados).
+        let off: Config = toml::from_str("[prompts]\ndir = \"\"\n").unwrap();
+        assert!(off.prompts.dir.is_empty());
+
+        // Sin seccion: default relativo a config.toml.
+        let c2: Config = toml::from_str("[app]\nautostart = false\n").unwrap();
+        assert_eq!(c2.prompts.dir, "prompts");
     }
 
     #[test]

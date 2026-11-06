@@ -46,6 +46,18 @@ check_updates = true
 # Repo a consultar (vacio = sin check).
 repository = "avicdro/quick-actions"
 
+[prompts]
+# Prompts de IA personalizados: un .md por accion SI pisas el default.
+#   prompts/corregir.md, prompts/traducir.md
+#   prompts/resumir.md,  prompts/generar.md
+# Archivo ausente o vacio = prompt por defecto de la app.
+# Placeholders opcionales: {contexto} (corregir/generar), {idioma}
+# (traducir), {formato} (resumir) — se sustituyen en cada atajo.
+# Editar el .md NO requiere reiniciar (se lee en cada invocacion).
+# Ruta relativa a config.toml (default). Absoluta o con ~ = externa
+# (ej. "dir = \"~/quick-actions-prompts\""); "" = solo defaults.
+dir = "prompts"
+
 # Para fases futuras (app-launcher, notifications)
 [launcher]
 enabled = false # Fase 4
