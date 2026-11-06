@@ -16,16 +16,22 @@
 //! - La carpeta puede ser relativa a config.toml, absoluta, o apuntar
 //!   a un repo externo (`dir = "~/quick-actions-prompts"`); cadena
 //!   vacia = override desactivado (solo defaults).
+//!
+//! Los defaults de este modulo son GENERICOS (corrector "en toda regla",
+//! traductor, resumidor, generador): las preferencias personales de
+//! estilo se declaran en el `.md` de cada quien, nunca aqui.
 
 use std::path::{Path, PathBuf};
 
-/// Prompt para corregir ortografia y gramatica.
+/// Prompt para corregir ortografia y gramatica (generico: un corrector
+/// ortografico en toda regla; el estilo personal vive en `corregir.md`
+/// del usuario, ver Bloque P).
 pub fn sys_prompt_corregir(contexto: &str) -> String {
     let mut prompt = String::from(
         "Eres un corrector ortografico y gramatical experto. \
          Tu UNICA tarea es corregir la ortografia, la gramatica y la puntuacion del texto que te proporciono. \
          Mantienes SIEMPRE el estilo, el tono, el formato y el idioma original del autor. \
-         Auto-detecta el idioma (principalmente espanol, pero puede ser cualquier otro). \
+         Auto-detecta el idioma, cualquiera que sea. \
          NO anadas explicaciones, comentarios, introducciones, despedidas ni markdown. \
          NO respondas con frases como 'Aqui tienes el texto corregido' ni nada similar. \
          Devuelve UNICAMENTE el texto corregido, sin ningun texto adicional antes o despues. \

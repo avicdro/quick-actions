@@ -78,7 +78,34 @@ theme = "dark"           # "dark" (default), "light" o "system" (sigue Windows)
 autostart = false        # Auto-arranque con Windows (tambien via tray)
 check_updates = true     # Buscar releases nuevas al arrancar
 repository = "avicdro/quick-actions"
+
+[prompts]
+dir = "prompts"          # carpeta de prompts personalizados (relativa a config.toml)
 ```
+
+### 🤖 Prompts de IA personalizados
+
+Cada acción usa un prompt por defecto compilado en el programa. Para pisar
+el tuyo, basta un `.md` en la carpeta de prompts (`[prompts] dir` de
+config.toml; el primer arranque la crea con un `README.md` de ayuda):
+
+```text
+prompts/
+├── corregir.md    # {contexto} opcional
+├── traducir.md    # {idioma} opcional
+├── resumir.md     # {formato} opcional
+└── generar.md     # {contexto} opcional
+```
+
+- **Archivo ausente o vacío** → se usa el prompt por defecto (borrar el
+  `.md` es revertir al instante).
+- Los placeholders `{contexto}` / `{idioma}` / `{formato}` se sustituyen
+  en cada atajo por la info que el código detecta; pon los que quieras.
+- **No hace falta reiniciar**: el `.md` se lee en cada invocación.
+- En Ajustes hay un botón **"Abrir carpeta de prompts"** para llegar
+  directo. Y `dir` acepta ruta absoluta o `~` — p. ej. apuntarlo a tu
+  repo privado de dotfiles:
+  `dir = "~/quick-actions-prompts"`.
 
 ## 🛠️ Build
 
