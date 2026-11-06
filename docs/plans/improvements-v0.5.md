@@ -267,3 +267,56 @@ mínima en cada commit (los módulos windows-only no compilan en host).
 
 Verificación de cada commit: `cargo fmt --all --check` + `cargo test --lib`
 (43 tests) + `cargo build --release --target x86_64-pc-windows-gnu`.
+
+---
+
+## Bloque P — Prompts de IA personalizados (apéndice, 2026-11-06)
+
+**Decisión previa**: los prompts de los atajos son muy personales; NO
+deben vivir en el repo público. El proyecto queda con prompts base
+GENERICOS y cada quien pisa los suyos por `.md` — fácil de configurar.
+
+**Mecánica final**:
+- `[prompts] dir` en config.toml (default `prompts` relativa al config);
+  ruta absoluta o con `~` = externa (repositorio privado de prompts);
+  cadena vacía = override desactivado.
+- Override por archivo: `prompts/corregir.md`, `traducir.md`,
+  `resumir.md`, `generar.md`. Ausente o vacío = default compilado.
+- Placeholders opcionales: `{contexto}`, `{idioma}`, `{formato}`.
+- Sin reiniciar: el `.md` se lee en cada invocación (I/O trivial).
+- Bootstrap: primera ejecución crea la carpeta limpia + `README.md`
+  (con un ejemplo de override tipo-chat, en vez de hardcodear el estilo
+  del dueño en el código).
+- Ajustes: botón "Abrir carpeta de prompts".
+- Defaults en `src/prompts.rs` pasan a neutros (corrector "en toda
+  regla"); el estilo personal (punto→enter, guion→`~`, tono chat
+  Slack/Discord/Teams) va en el `.md` privado del dueño — nunca aquí.
+- Prompts del dueño: repositorio privado aparte; dotfiles público NO
+  lleva scripts privados (sí puede referenciar el repo como submodule).
+
+**Checklist** (ejecutado)
+- [x] P1: `[prompts]` en config + templates + tests (`21b043e`)
+- [x] P2: motor en prompts.rs — resolve_dir (~, absoluta, relativa),
+      prompt_con_override (ausente/vacío = default), placeholders,
+      ensure_default_folder + 7 tests (`204bb4b`)
+- [x] P3: wiring actions (4 handlers), bootstrap en main, botón Ajustes
+      (`0370ed6`)
+- [x] P4: README del repo + defaults genéricos (`d88be68`)
+
+**Pendiente fuera del repo (dueño)**
+- [ ] Crear repo privado `quick-actions-prompts` con sus 4 `.md`
+      (el estilo-chat discutido va en su `corregir.md`).
+- [ ] `config.toml` local: `dir = "~/quick-actions-prompts"` (o symlink).
+- [ ] QA manual en Windows: override activo, placeholder {contexto},
+      botón de Ajustes abre la carpeta correcta.
+
+---
+
+## Registro de Cambios (Bloque P)
+
+| Fecha | Ítem | Commit | Notas |
+|-------|------|--------|-------|
+| 2026-11-06 | P1 ([prompts] en config) | `21b043e` | dir relativa/absoluta/~; "" = override off |
+| 2026-11-06 | P2 (motor de override) | `204bb4b` | cross-platform, 51 tests |
+| 2026-11-06 | P3 (wiring + bootstrap + Ajustes) | `0370ed6` | 4 handlers leen .md en cada atajo |
+| 2026-11-06 | P4 (README + defaults genéricos) | `d88be68` | estilo-chat → al .md privado del dueño |
