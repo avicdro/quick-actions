@@ -171,6 +171,16 @@ fn windows_main() {
 
     let config_path = exe_dir.join("config.toml");
 
+    // Bloque P (v0.6): bootstrap de la carpeta de prompts personalizados.
+    // Solo si no existe: se crea limpia, con README (los defaults viven
+    // en codigo; el README explica como pisarlos por .md).
+    if let (Some(cfg_dir), Some(prompts_dir)) = (
+        config_path.parent().map(std::path::Path::to_path_buf),
+        config.read().ok().map(|c| c.prompts.dir.clone()),
+    ) {
+        quick_actions::prompts::ensure_default_folder(&cfg_dir, &prompts_dir);
+    }
+
     // Fase 1.3: modificador/capsmode APLICADOS — snapshot de la config de
     // arranque (el hook NO la relee en caliente; cambiarlos exige reinicio).
     let hk_cfg = config

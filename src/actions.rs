@@ -101,6 +101,19 @@ pub fn handle_command(cmd: HotkeyCommand, state: &AppState) -> Result<()> {
     result
 }
 
+/// Bloque P (v0.6): carpeta de prompts personalizados resuelta desde la
+/// config (`[prompts] dir`). `None` = override desactivado (dir vacio)
+/// o config ilegible: los wrappers de `prompts` caen al default.
+fn prompts_dir(state: &AppState) -> Option<std::path::PathBuf> {
+    let raw = state.config.read().ok()?.prompts.dir.clone();
+    let cfg_dir = state
+        .config_path
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    crate::prompts::resolve_dir(&cfg_dir, &raw)
+}
+
 fn handle_correct(state: &AppState, ollama: OllamaClient) -> Result<()> {
     let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Loading(
         "Corrigiendo...".to_string(),
@@ -114,7 +127,8 @@ fn handle_correct(state: &AppState, ollama: OllamaClient) -> Result<()> {
     }
 
     let (contexto, texto_limpio) = text_utils::extraer_contexto(&texto);
-    let sys_prompt = prompts::sys_prompt_corregir(&contexto);
+    // Bloque P: corregir.md personalizado si existe; default si no.
+    let sys_prompt = prompts::corregir(prompts_dir(state).as_deref(), &contexto);
 
     tracing::info!("Corrigiendo texto ({} chars)...", texto_limpio.len());
     let resultado =
@@ -160,7 +174,8 @@ fn handle_translate(state: &AppState, ollama: OllamaClient) -> Result<()> {
     }
 
     let (idioma, texto_limpio) = text_utils::extraer_contexto(&texto);
-    let sys_prompt = prompts::sys_prompt_traducir(&idioma);
+    // Bloque P: traducir.md personalizado si existe; default si no.
+    let sys_prompt = prompts::traducir(prompts_dir(state).as_deref(), &idioma);
 
     tracing::info!("Traduciendo ({} chars)...", texto_limpio.len());
     let resultado =
@@ -204,7 +219,8 @@ fn handle_summarize(state: &AppState, ollama: OllamaClient) -> Result<()> {
     }
 
     let (formato, texto_limpio) = text_utils::extraer_contexto(&texto);
-    let sys_prompt = prompts::sys_prompt_resumir(&formato);
+    // Bloque P: resumir.md personalizado si existe; default si no.
+    let sys_prompt = prompts::resumir(prompts_dir(state).as_deref(), &formato);
 
     tracing::info!("Resumiendo ({} chars)...", texto_limpio.len());
     let resultado =
@@ -239,7 +255,8 @@ fn handle_generate(state: &AppState, ollama: OllamaClient) -> Result<()> {
     }
 
     let (contexto, prompt) = text_utils::extraer_contexto(&texto);
-    let sys_prompt = prompts::sys_prompt_generar(&contexto);
+    // Bloque P: generar.md personalizado si existe; default si no.
+    let sys_prompt = prompts::generar(prompts_dir(state).as_deref(), &contexto);
 
     tracing::info!("Generando respuesta ({} chars)...", prompt.len());
     let resultado = crate::runtime::global().block_on(ollama.generate(&sys_prompt, &prompt))?;

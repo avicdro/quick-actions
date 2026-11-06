@@ -918,6 +918,45 @@ impl QuickActionsApp {
                 self.state.spawn_models_refresh();
             }
         });
+
+        // ================================================== Bloque P: prompts personalizados
+        ui.add_space(12.0);
+        ui.separator();
+        ui.strong("Prompts de IA personalizados");
+        ui.label(
+            egui::RichText::new(
+                "Un .md por accion (corregir/traducir/resumir/generar) pisa \
+                 el prompt por defecto. Archivo ausente o vacio = default. \
+                 Los .md se leen en cada atajo: editar sin reiniciar.",
+            )
+            .small()
+            .color(theme::palette().text_dim),
+        );
+        ui.horizontal(|ui| {
+            if ui.button("Abrir carpeta de prompts").clicked() {
+                // Misma resolucion que los handlers de acciones: [prompts]
+                // dir relativa al config, absoluta o con ~. Si el override
+                // esta off (dir vacio), abre la default de todos modos.
+                let raw_dir = self
+                    .state
+                    .config
+                    .read()
+                    .ok()
+                    .map(|c| c.prompts.dir.clone())
+                    .unwrap_or_else(|| "prompts".to_string());
+                let cfg_dir = self
+                    .state
+                    .config_path
+                    .parent()
+                    .map(std::path::Path::to_path_buf)
+                    .unwrap_or_else(|| std::path::PathBuf::from("."));
+                let target = crate::prompts::resolve_dir(&cfg_dir, &raw_dir)
+                    .unwrap_or_else(|| cfg_dir.join("prompts"));
+                if std::fs::create_dir_all(&target).is_ok() {
+                    open_url_in_browser(&target.to_string_lossy());
+                }
+            }
+        });
     }
 
     /// Persiste la seccion [ollama] completa (model/endpoint/timeout) y la
