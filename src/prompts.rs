@@ -12,7 +12,7 @@
 //! - Placeholders opcionales en el .md (`{contexto}`, `{idioma}`,
 //!   `{formato}`) se sustituyen por los valores del runtime.
 //! - El archivo se lee en CADA invocacion: editarlo toma efecto al
-//!    siguiente atajo, sin reiniciar (I/O local despreciable).
+//!   siguiente atajo, sin reiniciar (I/O local despreciable).
 //! - La carpeta puede ser relativa a config.toml, absoluta, o apuntar
 //!   a un repo externo (`dir = "~/quick-actions-prompts"`); cadena
 //!   vacia = override desactivado (solo defaults).
@@ -160,7 +160,7 @@ pub fn resolve_dir_with_home(config_dir: &Path, raw: &str, home: Option<&str>) -
 
     // ~/... o ~\... (o solo "~"): substituir por el home.
     if raw == "~" {
-        return home.map(|h| PathBuf::from(h));
+        return home.map(PathBuf::from);
     }
     if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
         return home.map(|h| PathBuf::from(h).join(rest));
@@ -378,7 +378,8 @@ mod tests {
     #[test]
     fn bootstrap_crea_carpeta_limpia_con_readme_y_no_revisa_hijos() {
         let base = tmp_dir("qa-prompts-bootstrap");
-        let cfg = base.join("config.toml"); // no hace falta que exista
+        // (el config.toml no hace falta que exista: resolve_dir solo usa
+        // la ruta del directorio padre)
 
         ensure_default_folder(&base, "prompts");
         let readme = base.join("prompts").join("README.md");
