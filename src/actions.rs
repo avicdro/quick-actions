@@ -91,6 +91,10 @@ pub fn handle_command(cmd: HotkeyCommand, state: &AppState) -> Result<()> {
 
     // Si hubo error, mostrarlo sutilmente en la barra de estado
     if let Err(ref e) = result {
+        // v0.3.0-hotfix: el error SOLO iba al toast; sin esta linea el log
+        // no decia NADA cuando la captura/pegado fallaba (diagnostico a
+        // ciegas). Error persistente en log + toast para el usuario.
+        tracing::error!("accion {cmd:?} fallo: {e}");
         let msg = format!("Error: {e}");
         let _ = state.ui_tx.send(crate::ui_protocol::UiCommand::SetStatus(
             crate::ui_protocol::StatusMsg::Error(msg),
@@ -115,16 +119,20 @@ fn prompts_dir(state: &AppState) -> Option<std::path::PathBuf> {
 }
 
 fn handle_correct(state: &AppState, ollama: OllamaClient) -> Result<()> {
-    let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Loading(
-        "Corrigiendo...".to_string(),
-    )));
-    state.repaint();
-
+    // v0.3.0-hotfix: capturar el texto ANTES de mostrar el toast. Si el
+    // overlay nace antes del Ctrl+C, puede llevarse el foco justo en la
+    // captura (el WS_EX_NOACTIVATE del toast es el fix de raiz; este orden
+    // es el cinturon extra: durante la captura ni siquiera hay overlay).
     let texto = obtener_texto_para_corregir(state)?;
     if texto.is_empty() {
         let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Clear));
         return Ok(());
     }
+
+    let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Loading(
+        "Corrigiendo...".to_string(),
+    )));
+    state.repaint();
 
     let (contexto, texto_limpio) = text_utils::extraer_contexto(&texto);
     // Bloque P: corregir.md personalizado si existe; default si no.
@@ -162,16 +170,17 @@ fn handle_correct(state: &AppState, ollama: OllamaClient) -> Result<()> {
 }
 
 fn handle_translate(state: &AppState, ollama: OllamaClient) -> Result<()> {
-    let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Loading(
-        "Traduciendo...".to_string(),
-    )));
-    state.repaint();
-
+    // v0.3.0-hotfix: captura antes del toast (mismo motivo que correct).
     let texto = obtener_texto_para_corregir(state)?;
     if texto.is_empty() {
         let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Clear));
         return Ok(());
     }
+
+    let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Loading(
+        "Traduciendo...".to_string(),
+    )));
+    state.repaint();
 
     let (idioma, texto_limpio) = text_utils::extraer_contexto(&texto);
     // Bloque P: traducir.md personalizado si existe; default si no.
@@ -207,16 +216,17 @@ fn handle_translate(state: &AppState, ollama: OllamaClient) -> Result<()> {
 }
 
 fn handle_summarize(state: &AppState, ollama: OllamaClient) -> Result<()> {
-    let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Loading(
-        "Resumiendo...".to_string(),
-    )));
-    state.repaint();
-
+    // v0.3.0-hotfix: captura antes del toast (mismo motivo que correct).
     let texto = obtener_texto_para_corregir(state)?;
     if texto.is_empty() {
         let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Clear));
         return Ok(());
     }
+
+    let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Loading(
+        "Resumiendo...".to_string(),
+    )));
+    state.repaint();
 
     let (formato, texto_limpio) = text_utils::extraer_contexto(&texto);
     // Bloque P: resumir.md personalizado si existe; default si no.
@@ -243,16 +253,17 @@ fn handle_summarize(state: &AppState, ollama: OllamaClient) -> Result<()> {
 }
 
 fn handle_generate(state: &AppState, ollama: OllamaClient) -> Result<()> {
-    let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Loading(
-        "Generando respuesta...".to_string(),
-    )));
-    state.repaint();
-
+    // v0.3.0-hotfix: captura antes del toast (mismo motivo que correct).
     let texto = obtener_texto_para_corregir(state)?;
     if texto.is_empty() {
         let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Clear));
         return Ok(());
     }
+
+    let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Loading(
+        "Generando respuesta...".to_string(),
+    )));
+    state.repaint();
 
     let (contexto, prompt) = text_utils::extraer_contexto(&texto);
     // Bloque P: generar.md personalizado si existe; default si no.
@@ -298,15 +309,50 @@ fn handle_show_history(state: &AppState) -> Result<()> {
 // Helpers de obtencion de texto
 // ---------------------------------------------------------------------------
 
+/// v0.3.0-hotfix: diagnóstico de foco en la captura — si el Ctrl+C se
+/// manda con quick-actions en primer plano (en vez del editor del
+/// usuario), el portapapeles queda vacio y no hay nada que corregir.
+#[cfg(windows)]
+fn log_foreground_window(tag: &str) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetClassNameW, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
+    };
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        let mut buf = [0u16; 256];
+        let n = GetWindowTextW(hwnd, &mut buf);
+        let title = String::from_utf16_lossy(&buf[..n.max(0) as usize]);
+        let mut cls = [0u16; 128];
+        let nc = GetClassNameW(hwnd, &mut cls);
+        let class = String::from_utf16_lossy(&cls[..nc.max(0) as usize]);
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        let own = if pid == std::process::id() {
+            "NUESTRA"
+        } else {
+            "otro-proceso"
+        };
+        tracing::debug!(
+            "captura({tag}): foreground hwnd=0x{:X} pid={pid}({own}) class='{class}' title='{title}'",
+            hwnd.0 as usize
+        );
+    }
+}
+
 fn obtener_texto_para_corregir(state: &AppState) -> Result<String> {
     state.clipboard.backup()?;
     state.clipboard.clear()?;
+    log_foreground_window("antes-de-copy");
+    tracing::debug!("captura: backup+clear ok; enviando Ctrl+C");
 
     KeySimulator::copy(state.hook_modifier)?;
     std::thread::sleep(std::time::Duration::from_millis(150));
     let texto = state.clipboard.get_text()?;
+    log_foreground_window("despues-de-copy");
+    tracing::debug!("captura: clipboard tras copy = {} chars", texto.len());
 
     if texto.trim().is_empty() {
+        tracing::debug!("captura: copy vacio -> fallback select_all + copy");
         state.clipboard.restore()?;
         KeySimulator::select_all(state.hook_modifier)?;
         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -314,6 +360,7 @@ fn obtener_texto_para_corregir(state: &AppState) -> Result<String> {
         KeySimulator::copy(state.hook_modifier)?;
         std::thread::sleep(std::time::Duration::from_millis(150));
         let texto = state.clipboard.get_text()?;
+        tracing::debug!("captura: clipboard tras fallback = {} chars", texto.len());
 
         if texto.trim().is_empty() {
             tracing::warn!("No hay texto para corregir.");

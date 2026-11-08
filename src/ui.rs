@@ -1202,6 +1202,13 @@ impl eframe::App for QuickActionsApp {
         // toast este visible. Si solo se llama cuando cambia el estado,
         // el viewport se cierra inmediatamente (eframe lo considera "no redrawn").
         if self.toast_visible {
+            // v0.3.0-hotfix: winit crea el viewport SIN WS_EX_NOACTIVATE;
+            // al mostrarse ACTIVABA la ventana y el Ctrl+C de la captura
+            // llegaba al toast en vez del editor del usuario (clipboard
+            // vacio, "No hay texto"). Flag aplicado por-frame (el HWND
+            // nace con el primer show; si aun no existe, no-op).
+            #[cfg(windows)]
+            toast_no_activate();
             let toast_id = egui::ViewportId::from_hash_of("toast");
             let monitor = ctx
                 .input(|i| i.viewport().monitor_size)
@@ -1530,6 +1537,55 @@ pub mod theme {
             if std::ptr::eq(p, &LIGHT) { 1 } else { 0 },
             Ordering::Relaxed,
         );
+    }
+}
+
+#[cfg(windows)]
+fn toast_no_activate() {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetClassNameW, GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId,
+        SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
+    };
+
+    /// Busca el viewport del toast: ventana de ESTE proceso, clase winit
+    /// ("Window Class"), titulo vacio (el overlay se crea `with_title("")`;
+    /// la principal siempre tiene titulo). Solo una ventana cumple eso.
+    unsafe extern "system" fn find(hwnd: HWND, out: LPARAM) -> BOOL {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid != std::process::id() {
+            return BOOL(1);
+        }
+        let mut cls = [0u16; 64];
+        let nc = GetClassNameW(hwnd, &mut cls);
+        let class = String::from_utf16_lossy(&cls[..nc.max(0) as usize]);
+        if class != "Window Class" {
+            return BOOL(1);
+        }
+        let mut t = [0u16; 8];
+        let n = GetWindowTextW(hwnd, &mut t);
+        if n != 0 {
+            return BOOL(1); // con titulo: es la main, no el toast
+        }
+        let dst = out.0 as *mut HWND;
+        if !dst.is_null() {
+            *dst = hwnd;
+        }
+        BOOL(0)
+    }
+
+    unsafe {
+        let mut found = HWND(std::ptr::null_mut());
+        let ptr = &mut found as *mut HWND as isize;
+        let _ = EnumWindows(Some(find), LPARAM(ptr));
+        if found.0.is_null() {
+            return; // aun no creado; el siguiente frame lo aplica
+        }
+        let ex = GetWindowLongPtrW(found, GWL_EXSTYLE);
+        if ex & (WS_EX_NOACTIVATE.0 as isize) == 0 {
+            SetWindowLongPtrW(found, GWL_EXSTYLE, ex | (WS_EX_NOACTIVATE.0 as isize));
+            tracing::debug!("toast: WS_EX_NOACTIVATE aplicado (no robara el foco)");
+        }
     }
 }
 

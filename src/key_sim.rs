@@ -5,6 +5,53 @@ use std::time::Duration;
 use crate::error::{AppError, Result};
 use crate::hotkeys::Modifier;
 
+/// Simula `Ctrl+<letra>` por TECLA VIRTUAL Win32 (VK_C/V/A), no por
+/// caracter Unicode/scancode.
+///
+/// Diagnostico v0.3.0-hotfix: enigo traduce `Key::Unicode('c')` via
+/// `VkKeyScanW` (layout activo) + scancode. El resultado NO disparaba el
+/// acelerador Ctrl+C de las apps (notepad incluido: portapapeles vacio,
+/// "No hay texto para corregir"). Con VK explicito, SendInput entrega el
+/// atajo exacto que cualquier app reconoce, independiente del layout.
+#[cfg(windows)]
+fn ctrl_vk(vk: u16) -> Result<()> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY,
+    };
+
+    const VK_CONTROL: u16 = 0x11;
+    let key = |vk: u16, up: bool| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(vk),
+                wScan: 0,
+                dwFlags: if up {
+                    KEYEVENTF_KEYUP
+                } else {
+                    Default::default()
+                },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let seq = [
+        key(VK_CONTROL, false),
+        key(vk, false),
+        key(vk, true),
+        key(VK_CONTROL, true),
+    ];
+    let sent = unsafe { SendInput(&seq, std::mem::size_of::<INPUT>() as i32) };
+    if sent as usize != seq.len() {
+        return Err(AppError::Keyboard(format!(
+            "SendInput Ctrl+VK(0x{vk:02X}): solo {sent}/{} eventos entregados",
+            seq.len()
+        )));
+    }
+    Ok(())
+}
+
 /// Simula pulsaciones de teclado usando `enigo`.
 pub struct KeySimulator;
 
@@ -59,13 +106,8 @@ impl KeySimulator {
     /// Simula `Ctrl+C` (copiar seleccion).
     pub fn copy(modifier: Modifier) -> Result<()> {
         Self::release_modifiers(modifier)?;
-        let mut enigo = Self::enigo()?;
-        EnigoKeyboard::key(&mut enigo, Key::Control, Direction::Press)
-            .map_err(|e| AppError::Keyboard(format!("Error teclado: {e}")))?;
-        EnigoKeyboard::key(&mut enigo, Key::Unicode('c'), Direction::Click)
-            .map_err(|e| AppError::Keyboard(format!("Error teclado: {e}")))?;
-        EnigoKeyboard::key(&mut enigo, Key::Control, Direction::Release)
-            .map_err(|e| AppError::Keyboard(format!("Error teclado: {e}")))?;
+        // v0.3.0-hotfix: VK directo, no enigo Unicode/scancode (ver ctrl_vk).
+        ctrl_vk(0x43)?; // VK_C
         thread::sleep(Duration::from_millis(150));
         Ok(())
     }
@@ -73,13 +115,7 @@ impl KeySimulator {
     /// Simula `Ctrl+V` (pegar).
     pub fn paste(modifier: Modifier) -> Result<()> {
         Self::release_modifiers(modifier)?;
-        let mut enigo = Self::enigo()?;
-        EnigoKeyboard::key(&mut enigo, Key::Control, Direction::Press)
-            .map_err(|e| AppError::Keyboard(format!("Error teclado: {e}")))?;
-        EnigoKeyboard::key(&mut enigo, Key::Unicode('v'), Direction::Click)
-            .map_err(|e| AppError::Keyboard(format!("Error teclado: {e}")))?;
-        EnigoKeyboard::key(&mut enigo, Key::Control, Direction::Release)
-            .map_err(|e| AppError::Keyboard(format!("Error teclado: {e}")))?;
+        ctrl_vk(0x56)?; // VK_V
         thread::sleep(Duration::from_millis(50));
         Ok(())
     }
@@ -87,13 +123,7 @@ impl KeySimulator {
     /// Simula `Ctrl+A` (seleccionar todo).
     pub fn select_all(modifier: Modifier) -> Result<()> {
         Self::release_modifiers(modifier)?;
-        let mut enigo = Self::enigo()?;
-        EnigoKeyboard::key(&mut enigo, Key::Control, Direction::Press)
-            .map_err(|e| AppError::Keyboard(format!("Error teclado: {e}")))?;
-        EnigoKeyboard::key(&mut enigo, Key::Unicode('a'), Direction::Click)
-            .map_err(|e| AppError::Keyboard(format!("Error teclado: {e}")))?;
-        EnigoKeyboard::key(&mut enigo, Key::Control, Direction::Release)
-            .map_err(|e| AppError::Keyboard(format!("Error teclado: {e}")))?;
+        ctrl_vk(0x41)?; // VK_A
         thread::sleep(Duration::from_millis(50));
         Ok(())
     }
