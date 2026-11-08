@@ -339,6 +339,23 @@ fn log_foreground_window(tag: &str) {
     }
 }
 
+/// v0.3.1-hotfix: espera ACTIVA del texto copiado. Chrome y otras apps
+/// escriben el portapapeles ASYNC: un sleep fijo de 150ms quedaba corto
+/// a rachas (0 chars → fallback select_all que cambiaba la seleccion
+/// del usuario por "toda la pagina"). Poll cada 50ms hasta `max_ms`;
+/// devuelve el texto (posiblemente vacio si la app no copio nada).
+fn clipboard_wait_text(state: &AppState, max_ms: u64) -> Result<String> {
+    let mut waited = 0u64;
+    loop {
+        let texto = state.clipboard.get_text()?;
+        if !texto.trim().is_empty() || waited >= max_ms {
+            return Ok(texto);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        waited += 50;
+    }
+}
+
 fn obtener_texto_para_corregir(state: &AppState) -> Result<String> {
     state.clipboard.backup()?;
     state.clipboard.clear()?;
@@ -346,8 +363,7 @@ fn obtener_texto_para_corregir(state: &AppState) -> Result<String> {
     tracing::debug!("captura: backup+clear ok; enviando Ctrl+C");
 
     KeySimulator::copy(state.hook_modifier)?;
-    std::thread::sleep(std::time::Duration::from_millis(150));
-    let texto = state.clipboard.get_text()?;
+    let texto = clipboard_wait_text(state, 800)?;
     log_foreground_window("despues-de-copy");
     tracing::debug!("captura: clipboard tras copy = {} chars", texto.len());
 
@@ -358,8 +374,7 @@ fn obtener_texto_para_corregir(state: &AppState) -> Result<String> {
         std::thread::sleep(std::time::Duration::from_millis(100));
         state.clipboard.clear()?;
         KeySimulator::copy(state.hook_modifier)?;
-        std::thread::sleep(std::time::Duration::from_millis(150));
-        let texto = state.clipboard.get_text()?;
+        let texto = clipboard_wait_text(state, 800)?;
         tracing::debug!("captura: clipboard tras fallback = {} chars", texto.len());
 
         if texto.trim().is_empty() {
@@ -376,8 +391,7 @@ fn obtener_texto_para_corregir(state: &AppState) -> Result<String> {
             std::thread::sleep(std::time::Duration::from_millis(100));
             state.clipboard.clear()?;
             KeySimulator::copy(state.hook_modifier)?;
-            std::thread::sleep(std::time::Duration::from_millis(150));
-            let texto = state.clipboard.get_text()?;
+            let texto = clipboard_wait_text(state, 800)?;
 
             if texto.trim().is_empty() || texto.len() > 1000 {
                 tracing::warn!("Texto muy largo. Selecciona manualmente.");

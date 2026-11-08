@@ -320,3 +320,8 @@ GENERICOS y cada quien pisa los suyos por `.md` — fácil de configurar.
 | 2026-11-06 | P2 (motor de override) | `204bb4b` | cross-platform, 51 tests |
 | 2026-11-06 | P3 (wiring + bootstrap + Ajustes) | `0370ed6` | 4 handlers leen .md en cada atajo |
 | 2026-11-06 | P4 (README + defaults genéricos) | `d88be68` | estilo-chat → al .md privado del dueño |
+| 2026-11-08 | Release v0.3.0 publicada + auto-update LIVE | `e452cc3` | la v0.2.8 se auto-actualizó sola (cadena C3/C5 verificada en producción) |
+| 2026-11-08 | QA Windows real | — | `qa_smoke.ps1`: boot/dup OK; **C4 verificado** (tray→Salir: log limpio, NIM_DELETE, sin watchdog) |
+| 2026-11-08 | Setup privado del dueño | — | repo `avicdro/quick-actions-prompts` clonado en `C:\quick-actions\prompts`; `[prompts]` en config local |
+| 2026-11-09 | **Hotfix captura (foco del toast)** | `d3fec15` | overlay del toast activaba su ventana al mostrarse → el Ctrl+C de la captura llegaba al toast ("No hay texto"). Fix: `WS_EX_NOACTIVATE` + captura antes del Loading + Ctrl+C/V/A por VK directo + logs debug de captura y error en log |
+| 2026-11-09 | Release v0.3.1 (hotfix) | `48d4575` | + fix clippy CI (`1ac8ce3`: el CI de v0.3.0 estaba rojo por lints del Bloque P) |
