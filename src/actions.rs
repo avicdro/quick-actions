@@ -163,15 +163,16 @@ fn handle_correct(state: &AppState, ollama: OllamaClient) -> Result<()> {
     }
 
     state.clipboard.set_text(&resultado)?;
+    log_foreground_window("antes-de-pegar");
     KeySimulator::paste(state.hook_modifier)?;
+    log_foreground_window("despues-de-pegar");
 
-    // v0.3.2: feedback visible tras pegar (antes Clear: en destinos de
-    // solo-lectura, como una respuesta web de Gemini, el Ctrl+V no
-    // escribe y el usuario no veia NADA). Mensaje breve; el corregido
-    // queda en el portapapeles por si el pegado no escribio (Ctrl+V).
-    // El original queda en el historial de la app.
+    // v0.3.4: mensaje breve y honesto. "pegado" solo se puede afirmar si
+    // el destino es editable; en texto de solo lectura (una respuesta web)
+    // el Ctrl+V no escribe y el toast mentiria. El corregido queda en el
+    // portapapeles y en el historial de la app.
     let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Notice(
-        "Corregido y pegado".to_string(),
+        "Corregido".to_string(),
     )));
     state.repaint();
     Ok(())
@@ -364,51 +365,66 @@ fn clipboard_wait_text(state: &AppState, max_ms: u64) -> Result<String> {
     }
 }
 
+/// Copia la seleccion actual y espera el texto. `None` = la app no
+/// entrego nada (sin seleccion, o Ctrl+C perdido).
+fn copiar_seleccion(state: &AppState) -> Result<Option<String>> {
+    state.clipboard.clear()?;
+    KeySimulator::copy(state.hook_modifier)?;
+    let texto = clipboard_wait_text(state, 700)?;
+    Ok(if texto.trim().is_empty() {
+        None
+    } else {
+        Some(texto)
+    })
+}
+
 fn obtener_texto_para_corregir(state: &AppState) -> Result<String> {
     state.clipboard.backup()?;
-    state.clipboard.clear()?;
-    log_foreground_window("antes-de-copy");
-    tracing::debug!("captura: backup+clear ok; enviando Ctrl+C");
 
-    KeySimulator::copy(state.hook_modifier)?;
-    let texto = clipboard_wait_text(state, 800)?;
-    log_foreground_window("despues-de-copy");
-    tracing::debug!("captura: clipboard tras copy = {} chars", texto.len());
-
-    if texto.trim().is_empty() {
-        tracing::debug!("captura: copy vacio -> fallback select_all + copy");
-        state.clipboard.restore()?;
-        KeySimulator::select_all(state.hook_modifier)?;
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        state.clipboard.clear()?;
-        KeySimulator::copy(state.hook_modifier)?;
-        let texto = clipboard_wait_text(state, 800)?;
-        tracing::debug!("captura: clipboard tras fallback = {} chars", texto.len());
-
-        if texto.trim().is_empty() {
-            tracing::warn!("No hay texto para corregir.");
-            state.clipboard.restore()?;
-            return Ok(String::new());
-        }
-
-        if texto.len() > 3000 {
-            state.clipboard.restore()?;
-            KeySimulator::end()?;
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            KeySimulator::shift_home()?;
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            state.clipboard.clear()?;
-            KeySimulator::copy(state.hook_modifier)?;
-            let texto = clipboard_wait_text(state, 800)?;
-
-            if texto.trim().is_empty() || texto.len() > 1000 {
-                tracing::warn!("Texto muy largo. Selecciona manualmente.");
-                state.clipboard.restore()?;
-                return Ok(String::new());
-            }
-
+    // 1) La seleccion del usuario, con reintentos: algunas apps pierden
+    //    el primer Ctrl+C si llega justo al soltar el modificador. Se
+    //    reintenta SIN tocar la seleccion (el fallback select_all de
+    //    abajo sustituiria una seleccion parcial por TODO el documento).
+    for intento in 1..=2 {
+        if let Some(texto) = copiar_seleccion(state)? {
+            tracing::debug!(
+                "captura: seleccion copiada ({intento}/2, {} chars)",
+                texto.len()
+            );
             state.clipboard.restore()?;
             return Ok(texto);
+        }
+        tracing::debug!("captura: Ctrl+C sin texto (intento {intento}/2)");
+        std::thread::sleep(std::time::Duration::from_millis(120));
+    }
+
+    // 2) Sin seleccion: corregir todo el campo (comportamiento clasico).
+    tracing::debug!("captura: sin seleccion -> select_all + copy");
+    state.clipboard.restore()?;
+    KeySimulator::select_all(state.hook_modifier)?;
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let texto = copiar_seleccion(state)?.unwrap_or_default();
+    tracing::debug!("captura: tras select_all = {} chars", texto.len());
+
+    if texto.is_empty() {
+        tracing::warn!("No hay texto para corregir.");
+        state.clipboard.restore()?;
+        return Ok(String::new());
+    }
+
+    // 3) Texto enorme: quedarse con la linea del cursor.
+    if texto.len() > 3000 {
+        state.clipboard.restore()?;
+        KeySimulator::end()?;
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        KeySimulator::shift_home()?;
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let texto = copiar_seleccion(state)?.unwrap_or_default();
+
+        if texto.is_empty() || texto.len() > 1000 {
+            tracing::warn!("Texto muy largo. Selecciona manualmente.");
+            state.clipboard.restore()?;
+            return Ok(String::new());
         }
 
         state.clipboard.restore()?;

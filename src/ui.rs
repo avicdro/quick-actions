@@ -1228,6 +1228,14 @@ impl eframe::App for QuickActionsApp {
                 toast_id,
                 egui::ViewportBuilder::default()
                     .with_title("")
+                    // v0.3.4: el toast NUNCA debe activarse. Nuestro
+                    // WS_EX_NOACTIVATE por-frame llega DESPUES del primer
+                    // show: winit ya habia activado la ventana y robado el
+                    // foco al editor del usuario (el Ctrl+V del pegado se
+                    // lo comia el toast -> "Corregido y pegado" sin pegar).
+                    // `with_active(false)` evita la activacion en la
+                    // CREACION; el flag Win32 queda como cinturon.
+                    .with_active(false)
                     .with_inner_size([toast_w, toast_h])
                     .with_position([toast_x, toast_y])
                     .with_decorations(false)

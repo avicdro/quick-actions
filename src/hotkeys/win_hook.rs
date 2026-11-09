@@ -151,27 +151,61 @@ extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_param: LPARAM) 
         return unsafe { CallNextHookEx(None, n_code, w_param, l_param) };
     }
 
-    // try_with: si este callback somehow correra en otro thread (no debe),
-    // mejor passthrough que panic.
-    HOOK_STATE
+    // El repaint se ejecuta FUERA del borrow: es un callback ajeno
+    // (egui/winit) y ejecutarlo con el RefCell prestado abre la puerta a
+    // que el LL hook reentre y paniquee ("RefCell already borrowed"). Un
+    // panic dentro de `extern "system"` no puede desenrollar: ABORTA el
+    // proceso y se lleva por delante los atajos (bug v0.3.4).
+    let mut repaint: Option<RepaintFn> = None;
+    let result = HOOK_STATE
         .try_with(|slot| {
-            let mut slot = slot.borrow_mut();
-            match slot.as_mut() {
-                None => pass_through(n_code, w_param, l_param),
-                Some(state) => handle_event(state, n_code, w_param, l_param),
+            // try_with: si este callback somehow correra en otro thread (no debe),
+            // mejor passthrough que panic.
+            //
+            // try_borrow_mut: el LL hook puede reentrar (p. ej. por input
+            // inyectado mientras el callback sigue vivo). En vez de
+            // paniquear, el segundo evento pasa al sistema.
+            match slot.try_borrow_mut() {
+                Ok(mut slot) => match slot.as_mut() {
+                    None => pass_through(n_code, w_param, l_param),
+                    Some(state) => {
+                        let (result, fired) = handle_event(state, n_code, w_param, l_param);
+                        if fired {
+                            repaint = Some(Arc::clone(&state.repaint));
+                        }
+                        result
+                    }
+                },
+                Err(_) => {
+                    tracing::debug!("hook: reentrada detectada; evento al sistema");
+                    pass_through(n_code, w_param, l_param)
+                }
             }
         })
-        .unwrap_or_else(|_| pass_through(n_code, w_param, l_param))
+        .unwrap_or_else(|_| pass_through(n_code, w_param, l_param));
+
+    if let Some(repaint) = repaint {
+        repaint();
+    }
+    result
 }
 
 /// Logica del evento con el estado del thread del hook (fase 1.3).
-fn handle_event(state: &mut HookState, n_code: i32, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
+///
+/// Devuelve `(resultado_para_windows, se_disparo_un_atajo)`. El repaint
+/// del atajo lo hace `keyboard_proc` despues de soltar el borrow.
+fn handle_event(
+    state: &mut HookState,
+    n_code: i32,
+    w_param: WPARAM,
+    l_param: LPARAM,
+) -> (LRESULT, bool) {
     // Pausado (P2): passthrough total, como si el hook ni estuviera.
     // De paso reseteamos el latch para no revivir estados viejos.
     if state.suspended.load(Ordering::Relaxed) {
         state.latched = false;
         state.swallow_caps_up = false;
-        return pass_through(n_code, w_param, l_param);
+        return (pass_through(n_code, w_param, l_param), false);
     }
 
     // SAFETY: l_param apunta a un KBDLLHOOKSTRUCT valido proporcionado por
@@ -186,36 +220,38 @@ fn handle_event(state: &mut HookState, n_code: i32, w_param: WPARAM, l_param: LP
     // driver de teclado. Es seguro de llamar desde cualquier thread.
     let key_held = |vk: u32| unsafe { (GetAsyncKeyState(vk as i32) as u16) & 0x8000 != 0 };
 
+    let passthrough = || (pass_through(n_code, w_param, l_param), false);
+
     match state.modifier {
         Modifier::Alt => {
             // Comportamiento previo a P7: solo keydown con Alt presionado.
             if !is_keydown {
-                return pass_through(n_code, w_param, l_param);
+                return passthrough();
             }
             if !key_held(VK_MENU) {
-                return pass_through(n_code, w_param, l_param);
+                return passthrough();
             }
             if let Some(cmd) = mapped_command(vk_code) {
-                fire_command(state, cmd);
-                return LRESULT(1);
+                send_command(state, cmd);
+                return (LRESULT(1), true);
             }
-            pass_through(n_code, w_param, l_param)
+            passthrough()
         }
 
         Modifier::CapsLock if state.caps_mode == CapsMode::Hold => {
             // CapsLock pasa intacto al sistema (alterna mayusculas); solo
             // keydown de tecla_atajo con CapsLock fisicamente presionado.
             if !is_keydown || vk_code == VK_CAPITAL {
-                return pass_through(n_code, w_param, l_param);
+                return passthrough();
             }
             if !key_held(VK_CAPITAL) {
-                return pass_through(n_code, w_param, l_param);
+                return passthrough();
             }
             if let Some(cmd) = mapped_command(vk_code) {
-                fire_command(state, cmd);
-                return LRESULT(1);
+                send_command(state, cmd);
+                return (LRESULT(1), true);
             }
-            pass_through(n_code, w_param, l_param)
+            passthrough()
         }
 
         // CapsLock + toggle
@@ -230,37 +266,37 @@ fn handle_event(state: &mut HookState, n_code: i32, w_param: WPARAM, l_param: LP
                 }
                 state.swallow_caps_up = true;
                 // Consumimos el keydown: el sistema nunca alterna mayusculas.
-                return LRESULT(1);
+                return (LRESULT(1), false);
             }
             if is_keyup && state.swallow_caps_up {
                 state.swallow_caps_up = false;
-                return LRESULT(1);
+                return (LRESULT(1), false);
             }
-            pass_through(n_code, w_param, l_param)
+            passthrough()
         }
 
         // CapsLock + toggle: teclas normales
         Modifier::CapsLock => {
             if !is_keydown {
-                return pass_through(n_code, w_param, l_param);
+                return passthrough();
             }
             let was_latched = std::mem::take(&mut state.latched);
             if was_latched {
                 if let Some(cmd) = mapped_command(vk_code) {
                     // La tecla latcheada dispara y apaga el latch.
-                    fire_command(state, cmd);
-                    return LRESULT(1);
+                    send_command(state, cmd);
+                    return (LRESULT(1), true);
                 }
                 // Tecla no mapeada: apaga el latch y pasa al sistema
                 // (seguimos escribiendo en la app normalmente).
             }
-            pass_through(n_code, w_param, l_param)
+            passthrough()
         }
     }
 }
 
-fn fire_command(state: &mut HookState, cmd: HotkeyCommand) {
+/// Envia el comando al hilo de la app. El repaint lo hace `keyboard_proc`
+/// al soltar el borrow (nunca aqui: ver comentario de reentrada).
+fn send_command(state: &mut HookState, cmd: HotkeyCommand) {
     let _ = state.sender.send(cmd);
-    // Despertar el event loop del UI (antes: static CONTEXT + ui::request_repaint).
-    (state.repaint)();
 }
