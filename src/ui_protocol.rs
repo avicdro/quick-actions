@@ -91,6 +91,19 @@ mod toast_tests {
     use super::*;
 
     #[test]
+    fn toast_display_corta_largos_utf8_safe() {
+        assert_eq!(toast_display("corto"), "corto");
+        // 90 chars = el tope; el ultimo es la ellipsis.
+        let largo = "á".repeat(120);
+        let out = toast_display(&largo);
+        assert_eq!(out.chars().count(), 90);
+        assert!(out.ends_with('\u{2026}'));
+        // Justo en el limite: intacto.
+        let justo = "x".repeat(90);
+        assert_eq!(toast_display(&justo), justo);
+    }
+
+    #[test]
     fn expiry_durations() {
         assert_eq!(ToastKind::Loading.expiry_secs(), None);
         assert_eq!(ToastKind::Notice.expiry_secs(), Some(NOTICE_TOAST_SECS));
@@ -180,6 +193,21 @@ pub fn history_views(entries: &[crate::history::HistoryEntry]) -> Vec<HistoryEnt
             }
         })
         .collect()
+}
+
+/// Texto seguro para el toast: la pill es pequena (~280px, 2 lineas);
+/// un mensaje largo se salia de la caja (overflow visual). Trunca por
+/// CHARS (UTF-8 safe) con ellipsis. Los mensajes deben nacer breves;
+/// esto es solo la red de seguridad.
+#[must_use]
+pub fn toast_display(text: &str) -> String {
+    const MAX_CHARS: usize = 90;
+    if text.chars().count() <= MAX_CHARS {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(MAX_CHARS - 1).collect();
+    out.push('\u{2026}');
+    out
 }
 
 /// Comandos que el UI puede recibir.

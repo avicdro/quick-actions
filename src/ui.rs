@@ -1218,7 +1218,7 @@ impl eframe::App for QuickActionsApp {
             let toast_x = monitor.x - toast_w - 24.0;
             let toast_y = monitor.y - toast_h - 72.0;
 
-            let status = self.status.clone();
+            let status = crate::ui_protocol::toast_display(&self.status);
             let is_error = self.toast_is_error;
             let paused = self.paused;
             // U1: clase del toast para elegir icono (spinner solo en loading).
@@ -1380,11 +1380,19 @@ impl eframe::App for QuickActionsApp {
                                 } else {
                                     theme::palette().text
                                 };
-                                ui.label(
-                                    egui::RichText::new(&status)
-                                        .color(text_color)
-                                        .size(14.0)
-                                        .strong(),
+                                // Texto del estado: wrap dentro de la pill
+                                // (v0.3.3: mensajes largos se salian de la
+                                // caja; toast_display() ya los capa a 90
+                                // chars, aqui el wrap los reparte en 2
+                                // lineas como mucho).
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(&status)
+                                            .color(text_color)
+                                            .size(13.5)
+                                            .strong(),
+                                    )
+                                    .wrap(),
                                 );
                             });
                         });

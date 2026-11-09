@@ -165,14 +165,13 @@ fn handle_correct(state: &AppState, ollama: OllamaClient) -> Result<()> {
     state.clipboard.set_text(&resultado)?;
     KeySimulator::paste(state.hook_modifier)?;
 
-    // v0.3.2: feedback visible tras pegar. Antes se hacia Clear: si el
-    // destino es de solo-lectura (p. ej. la respuesta de Gemini en una
-    // web) el Ctrl+V no escribe nada y el usuario no veia NADA — con el
-    // corregido YA en el portapapeles pero sin saberlo. Toast Notice:
-    // pegado + red de seguridad por Ctrl+V (el original queda en el
-    // historial de la app).
+    // v0.3.2: feedback visible tras pegar (antes Clear: en destinos de
+    // solo-lectura, como una respuesta web de Gemini, el Ctrl+V no
+    // escribe y el usuario no veia NADA). Mensaje breve; el corregido
+    // queda en el portapapeles por si el pegado no escribio (Ctrl+V).
+    // El original queda en el historial de la app.
     let _ = state.ui_tx.send(UiCommand::SetStatus(StatusMsg::Notice(
-        "Corregido — pegado (si no se pego, esta en tu portapapeles: Ctrl+V)".to_string(),
+        "Corregido y pegado".to_string(),
     )));
     state.repaint();
     Ok(())
