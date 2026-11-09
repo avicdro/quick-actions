@@ -325,3 +325,8 @@ GENERICOS y cada quien pisa los suyos por `.md` — fácil de configurar.
 | 2026-11-08 | Setup privado del dueño | — | repo `avicdro/quick-actions-prompts` clonado en `C:\quick-actions\prompts`; `[prompts]` en config local |
 | 2026-11-09 | **Hotfix captura (foco del toast)** | `d3fec15` | overlay del toast activaba su ventana al mostrarse → el Ctrl+C de la captura llegaba al toast ("No hay texto"). Fix: `WS_EX_NOACTIVATE` + captura antes del Loading + Ctrl+C/V/A por VK directo + logs debug de captura y error en log |
 | 2026-11-09 | Release v0.3.1 (hotfix) | `48d4575` | + fix clippy CI (`1ac8ce3`: el CI de v0.3.0 estaba rojo por lints del Bloque P) |
+| 2026-11-09 | Captura robusta (clipboard async) | `6304af0` | Chrome entrega el texto tarde: polling hasta 800 ms en vez de sleep fijo |
+| 2026-11-09 | Toast breve | `ad52656` | "Corregido y pegado" + wrap y cap UTF-8 a 90 chars (`toast_display`) |
+| 2026-11-09 | Release v0.3.3 | `ccc98ee` | — |
+| 2026-11-09 | **Crash del hook (reentrada RefCell)** | `39737b3` | el repaint se llamaba con `HOOK_STATE` prestado; una reentrada del LL hook paniqueaba y el double panic en `extern "system"` **abortaba la app** (atajos muertos). Fix: repaint fuera del borrow + `try_borrow_mut`. Además `with_active(false)` en la creación del toast y reintento de `Ctrl+C` sin `select_all` |
+| 2026-11-09 | Release v0.3.4 | — | QA real 5/5 (Notepad + Alt+G: texto cambiado, foco correcto, app viva) |
